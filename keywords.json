@@ -1,0 +1,42 @@
+[
+    {
+        "keyword": "cyber\\+",
+        "replies": [
+            "Nice Cyber+ sale! Logged. ",
+            "Cyber+ recorded. Great job! ",
+            "Cyber+ noted. Keep them coming. "
+        ]
+    },
+    {
+        "keyword": "\\bbe\\b",
+        "replies": [
+            "Great BE sale! Added to the tally. ",
+            "BE locked in. Nice close! ",
+            "BE counted. Keep pushing! "
+        ]
+    },
+    {
+        "keyword": "be\\s*fiber",
+        "replies": [
+            "BE Fiber sale! Logged and ready. ",
+            "Great BE Fiber close! Well done. ",
+            "BE Fiber recorded — keep going strong! "
+        ]
+    },
+    {
+        "keyword": "battary",
+        "replies": [
+            "Battery sale noted. Keep charging ahead! ",
+            "Battery recorded — nice work! ",
+            "Battery logged in the system. Great job! "
+        ]
+    },
+    {
+        "keyword": "upgrade",
+        "replies": [
+            "Upgrade sale locked — excellent work! ",
+            "Upgrade recorded. Keep it up! ",
+            "Upgrade logged. Fantastic push! "
+        ]
+    }
+]
