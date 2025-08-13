@@ -1,0 +1,8 @@
+{
+    "theme": "light",
+    "autosave_enabled": true,
+    "autosave_interval_sec": 15,
+    "confirm_deletions": true,
+    "start_maximized": false,
+    "poll_interval_sec": 2
+}
