@@ -18,7 +18,78 @@ from selenium.common.exceptions import TimeoutException
 
 # ---------- Tkinter GUI ----------
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
+
+
+# ---------- Display helpers (human-readable keywords extracted from Regex) ----------
+def _regex_to_keywords_display(pattern: str) -> str:
+    """
+    מנסה לחלץ 'מילות מפתח' לקריאה אנושית מתוך Regex שבנוי ע"פ הבונה.
+    אם לא מצליח — חוזר לניחוש סביר על בסיס אותיות עברית, ולבסוף נפילה לאחור לתצוגה מקוצרת של ה-Regex.
+    """
+    if not isinstance(pattern, str):
+        return ""
+
+    pat = pattern.strip()
+
+    # הסר פלגים בתחילת הביטוי (למשל (?i)(?s))
+    pat = re.sub(r'^\(\?[a-zA-Z]+\)', '', pat)
+
+    tokens = []
+
+    # 1) הטוקן התקני מהבונה: (?<!\S)(?:[והבכלמש]{1,4})?TERM(?!\S)
+    tok_re = re.compile(r'\(\?\<\!\\\\S\)(?:\(\?\:\[והבכלמש\]\{1,4\}\)\?)?(.+?)\(\?\!\\\\S\)')
+    for m in tok_re.finditer(pat):
+        term = m.group(1)
+        # נקה קבוצות לא-לוכדות של מפרידי־פנים, למשל (?:[\s_\-\u05BE])?
+        term = re.sub(r'\(\?\:[^\)]*\)', ' ', term)
+        # הסר backslashes מיותרים לפני תוים
+        term = re.sub(r'\\([^\w])', r'\1', term)
+        term = term.replace('\\ ', ' ')
+        # נרמל רווחים
+        term = re.sub(r'\s+', ' ', term).strip()
+        if term:
+            tokens.append(term)
+
+    # 2) אם לא נמצאו, נסה אלטרנטיבות בתוך (?:A|B|C)
+    if not tokens:
+        # ננסה למצוא את הקבוצה הרחבה ביותר עם | שמכילה אותיות עברית
+        for grp in re.findall(r'\(\?:([^()]+)\)', pat):
+            if '|' in grp and re.search(r'[\u0590-\u05FF]', grp):
+                alts = [a.strip() for a in grp.split('|') if a.strip()]
+                # נקה escape-ים פשוטים
+                cleaned = []
+                for t in alts:
+                    t = re.sub(r'\\([^\w])', r'\1', t)
+                    t = t.replace('\\ ', ' ')
+                    t = re.sub(r'\s+', ' ', t).strip()
+                    if t:
+                        cleaned.append(t)
+                tokens.extend(cleaned)
+                if tokens:
+                    break
+
+    # 3) fallback: אסוף מילים בעברית מתוך הביטוי עצמו
+    if not tokens:
+        words = re.findall(r'[\u0590-\u05FF]{2,}', pat)
+        if words:
+            tokens = list(dict.fromkeys(words))  # unique & keep order
+
+    # 4) נפילה אחרונה — קטע קצר מה-Regex עצמו
+    if not tokens:
+        short = pat
+        short = short.replace('\n', ' ')
+        short = re.sub(r'\s+', ' ', short)
+        short = short.strip()
+        if len(short) > 48:
+            short = short[:45] + '…'
+        return short
+
+    # ייחוד ושמירה על סדר
+    tokens = list(dict.fromkeys(tokens))
+    # חבר לרשימה ידידותית
+    return ", ".join(tokens)
+
 
 # === Hebrew Regex Character Classes (added by patch) ===
 # Single-letter Hebrew prefixes like ו/ה/ב/כ/ל/מ/ש (optionally with geresh), limited to 1-4 letters.
@@ -884,6 +955,8 @@ class App(tk.Tk):
         ttk.Button(ds_frame, text="שמור בשם…", command=self.on_save_as_dataset).grid(row=1, column=1, padx=4, pady=6, sticky="e")
         ttk.Button(ds_frame, text="רענן", command=self.on_reload_dataset).grid(row=1, column=0, padx=4, pady=6, sticky="e")
 
+        
+        ttk.Button(ds_frame, text="מאגר חדש…", command=self.on_new_dataset).grid(row=1, column=2, padx=4, pady=6, sticky="w")
         ctrl = ttk.LabelFrame(frm, text="שליטה בבוט")
         ctrl.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
         ttk.Label(ctrl, text="שם הקבוצה:").grid(row=0, column=2, padx=6, pady=6, sticky="e")
@@ -912,11 +985,13 @@ class App(tk.Tk):
         rules_frame.columnconfigure(0, weight=1)
         rules_frame.rowconfigure(1, weight=1)
 
-        self.rules = ttk.Treeview(rules_frame, columns=("pattern","count"), show="headings", selectmode="browse")
-        self.rules.heading("pattern", text="ביטוי (Regex)")
+        self.rules = ttk.Treeview(rules_frame, columns=("count","keywords","idx"), show="headings", selectmode="browse")
         self.rules.heading("count", text="מס׳ תגובות")
-        self.rules.column("pattern", anchor="e", width=420)
+        self.rules.heading("keywords", text="מילות מפתח (תצוגה)")
+        self.rules.heading("idx", text="#")
         self.rules.column("count", anchor="center", width=120)
+        self.rules.column("keywords", anchor="center", width=520)
+        self.rules.column("idx", anchor="center", width=50)
         self.rules.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
         self.rules.bind("<<TreeviewSelect>>", self.on_tree_select)
 
@@ -1024,6 +1099,46 @@ class App(tk.Tk):
             self.schedule_autosave()
 
     # ---------- dataset handlers ----------
+
+    def on_new_dataset(self):
+        """
+        יוצר מאגר חדש ריק (JSON) באותה תיקייה של המאגר הנוכחי, לפי שם שהמשתמש בוחר,
+        טוען אותו מיד — ללא שינויי UI נוספים.
+        """
+        from pathlib import Path
+        from tkinter import messagebox, simpledialog
+        try:
+            cur = Path(self.ds_path_var.get()).expanduser()
+        except Exception:
+            cur = Path("keywords.json")
+        parent = cur.parent if cur.parent.exists() else Path(".")
+        name = simpledialog.askstring("מאגר חדש", "שם הקובץ (ללא סיומת):", initialvalue="keywords_new")
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            messagebox.showwarning("שם חסר", "נא להזין שם לקובץ.")
+            return
+        if not name.lower().endswith(".json"):
+            name += ".json"
+        new_path = (parent / name).resolve()
+        if new_path.exists():
+            if not messagebox.askyesno("קובץ קיים", f"הקובץ {new_path.name} כבר קיים. להחליף?"):
+                return
+        try:
+            new_path.write_text("[]", encoding="utf-8")
+            self.dataset = Dataset(new_path)
+            self.dataset.load()
+            self.ds_path_var.set(str(new_path))
+            self.refresh_rules_tree()
+            self._dirty = False
+            if hasattr(self, "_log"):
+                self._log(f"נוצר מאגר חדש: {new_path}")
+        except Exception as e:
+            messagebox.showerror("יצירת מאגר", f"שגיאה: {e}")
+
+
+
     def on_open_dataset(self):
         path = filedialog.askopenfilename(
             title="פתח מאגר",
@@ -1101,13 +1216,13 @@ class App(tk.Tk):
             self._log("הבוט אינו פעיל.")
 
     # ---------- rules tree & viewer ----------
+    
     def refresh_rules_tree(self):
         for iid in self.rules.get_children():
             self.rules.delete(iid)
-        for idx, r in enumerate(self.dataset.rules):
-            self.rules.insert("", "end", iid=str(idx),
-                              values=(r.pattern, len(r.replies)))
-
+        for idx, r in enumerate(self.dataset.rules, start=1):
+            display = _regex_to_keywords_display(r.pattern)
+            self.rules.insert("", "end", iid=str(idx-1), values=(len(r.replies), display, idx))
     def _set_replies_display(self, text: str):
         self.replies_txt.configure(state="normal")
         self.replies_txt.delete("1.0", "end")
