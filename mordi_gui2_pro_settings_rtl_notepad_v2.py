@@ -2044,16 +2044,84 @@ class _SchedulerThread(_thr.Thread):
                             continue
                         if when <= now:
                             due.append(it)
+
+                # Group due items by exact scheduled minute so messages with the same "when" share one WhatsApp session
+                buckets = {}
                 for it in due:
-                    ok = self.app_ref._send_scheduled_message(it["group"], it["text"])
-                    it["status"] = "sent" if ok else "failed"
-                    it["sent_at"] = datetime.now().isoformat(timespec="seconds")
-                    # update UI row in main thread
+                    key = (it.get("when") or "").strip()
+                    buckets.setdefault(key, []).append(it)
+
+                for when_key, items in buckets.items():
+                    # Open one Chrome session (separate profile) per time bucket
+                    alt_profile = PROFILE_DIR / "schedule_profile"
+                    alt_profile.mkdir(exist_ok=True)
+                    _opts = Options()
+                    _opts.add_argument(f"--user-data-dir={alt_profile.resolve()}")
+                    _opts.add_argument("--start-maximized")
+                    _opts.add_argument("--log-level=3")
+                    _opts.add_argument("--disable-logging")
+                    _opts.add_experimental_option("detach", True)
+                    _drv = None
                     try:
-                        self.app_ref.after(0, self.app_ref._refresh_sched_table)
-                    except Exception:
-                        pass
-                    self.app_ref._save_schedules()
+                        _drv = webdriver.Chrome(options=_opts)
+                        _drv.get("https://web.whatsapp.com/")
+                        # ensure logged in
+                        wait_for_login(_drv, sec=120)
+
+                        for it in items:
+                            ok = False
+                            try:
+                                group = (it.get("group") or "").strip()
+                                text  = (it.get("text")  or "").strip()
+                                if not group or not text:
+                                    raise RuntimeError("Group or text missing")
+
+                                # open chat
+                                open_chat(_drv, group)
+
+                                # type + send
+                                box = WebDriverWait(_drv, 10).until(EC.element_to_be_clickable((By.XPATH, MSG_AREA)))
+                                _time.sleep(0.6)
+                                box.send_keys(text, Keys.ENTER)
+
+                                # confirm that message appeared
+                                sent_ok = False
+                                try:
+                                    for _ in range(100):  # ~20s
+                                        try:
+                                            bubbles = _drv.find_elements(By.CSS_SELECTOR, BUBBLES_ANY_CSS)
+                                            if bubbles:
+                                                last_txt = bubbles[-1].text.strip()
+                                                if last_txt == (text or "").strip():
+                                                    sent_ok = True
+                                                    break
+                                        except Exception:
+                                            pass
+                                        _time.sleep(0.2)
+                                except Exception:
+                                    sent_ok = False
+
+                                ok = bool(sent_ok)
+                            except Exception:
+                                ok = False
+                            # update item status + UI
+                            it["status"]  = "sent" if ok else "failed"
+                            it["sent_at"] = datetime.now().isoformat(timespec="seconds")
+                            try:
+                                self.app_ref.after(0, self.app_ref._refresh_sched_table)
+                            except Exception:
+                                pass
+                        # end for items
+                    finally:
+                        try:
+                            if _drv is not None:
+                                _time.sleep(1.0)  # wait 1s after the last message before closing the session
+                                _drv.quit()
+                        except Exception:
+                            pass
+
+                # persist once after processing all buckets
+                self.app_ref._save_schedules()
             except Exception as e:
                 # best-effort logging in status label if exists
                 try:
@@ -2403,7 +2471,7 @@ class SchedulePageMixin:
                     sent_ok = False
 
                 if sent_ok:
-                    _time.sleep(0.4)
+                    _time.sleep(1.0)
                     self._sched_set_status(f"נשלחה הודעה מתוזמנת ל-{group}")
                     return True
                 else:
