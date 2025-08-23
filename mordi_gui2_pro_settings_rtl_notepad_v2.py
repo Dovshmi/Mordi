@@ -636,7 +636,7 @@ class RegexBuilderDialog(tk.Toplevel):
 
 
 
-APP_TITLE = "Mordi 5.0.1"
+APP_TITLE = "Mordi 6.0"
 DEFAULT_DATASET = "keywords.json"
 DEFAULT_GROUP   = ""
 FREE_CHOICE = "(בחירה חופשית)"
@@ -1942,6 +1942,501 @@ class App(tk.Tk):
 def main():
     app = App()
     app.mainloop()
+
+# =========================
+#   Scheduler Add-on
+#   (non-breaking extension: adds a "תזמון הודעות" page and a background scheduler)
+# =========================
+from datetime import datetime, timedelta
+import json as _json
+import threading as _thr
+import time as _time
+import queue as _queue
+
+SCHEDULES_PATH = Path("schedules.json")
+
+def _edit_text_in_notepad(initial_text: str = "") -> str:
+    """
+    Opens Windows Notepad to edit a message body. Returns the edited text.
+    On non-Windows, falls back to a simple Tk text popup.
+    """
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
+        tmp.write(initial_text or "")
+        tmp.flush()
+        tmp.close()
+        try:
+            if os.name == "nt":
+                subprocess.call(["notepad.exe", tmp.name])
+            else:
+                # Simple cross-platform fallback: open default editor if available
+                editor = os.environ.get("EDITOR")
+                if editor:
+                    subprocess.call([editor, tmp.name])
+                else:
+                    # Very small Tk fallback editor
+                    import tkinter as _tk
+                    from tkinter import ttk as _ttk
+                    root = _tk.Toplevel()
+                    root.title("עריכת הודעה")
+                    txt = _tk.Text(root, wrap="word", width=80, height=20)
+                    txt.pack(fill="both", expand=True)
+                    with open(tmp.name, "r", encoding="utf-8") as _f:
+                        txt.insert("1.0", _f.read())
+                    def _save_and_close():
+                        with open(tmp.name, "w", encoding="utf-8") as _fw:
+                            _fw.write(txt.get("1.0", "end-1c"))
+                        root.destroy()
+                    _ttk.Button(root, text="שמור וסגור", command=_save_and_close).pack(pady=6)
+                    root.grab_set()
+                    root.wait_window()
+        finally:
+            with open(tmp.name, "r", encoding="utf-8") as r:
+                content = r.read()
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+        return content
+    except Exception as e:
+        try:
+            messagebox.showerror("Notepad", f"שגיאה בפתיחת Notepad: {e}")
+        except Exception:
+            pass
+        return initial_text or ""
+
+def _parse_time_from_inputs(date_str: str, hour_str: str, minute_str: str) -> datetime:
+    """
+    date_str: 'YYYY-MM-DD'
+    hour_str, minute_str: 'HH', 'MM'
+    Returns naive datetime in local time.
+    """
+    y, m, d = [int(x) for x in date_str.split("-")]
+    hh = int(hour_str)
+    mm = int(minute_str)
+    return datetime(y, m, d, hh, mm, 0)
+
+def _safe_text_preview(s: str, limit=48) -> str:
+    s = (s or "").replace("\n", " ")
+    return s if len(s) <= limit else s[:limit-1] + "…"
+
+class _SchedulerThread(_thr.Thread):
+    def __init__(self, app_ref):
+        super().__init__(daemon=True)
+        self.app_ref = app_ref
+        self._stop = _thr.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        # Poll every second for due tasks
+        while not self._stop.is_set():
+            try:
+                now = datetime.now()
+                due = []
+                # work on a copy to avoid concurrent modification
+                for it in list(self.app_ref._schedules):
+                    if it.get("status") == "pending":
+                        try:
+                            when = datetime.fromisoformat(it["when"])
+                        except Exception:
+                            continue
+                        if when <= now:
+                            due.append(it)
+                for it in due:
+                    ok = self.app_ref._send_scheduled_message(it["group"], it["text"])
+                    it["status"] = "sent" if ok else "failed"
+                    it["sent_at"] = datetime.now().isoformat(timespec="seconds")
+                    # update UI row in main thread
+                    try:
+                        self.app_ref.after(0, self.app_ref._refresh_sched_table)
+                    except Exception:
+                        pass
+                    self.app_ref._save_schedules()
+            except Exception as e:
+                # best-effort logging in status label if exists
+                try:
+                    self.app_ref._sched_set_status(f"שגיאת מתזמן: {e}")
+                except Exception:
+                    pass
+            _time.sleep(1.0)
+
+class SchedulePageMixin:
+    """
+    Mixin that augments App with:
+    - schedules store + persistence
+    - "תזמון הודעות" page with a small calendar/time picker and message body edited in Notepad
+    - background scheduler that sends via the existing bot driver if available, otherwise via a temporary driver profile
+    """
+    def _init_schedules_store(self):
+        self._schedules_path = SCHEDULES_PATH
+        self._schedules = []
+        try:
+            if self._schedules_path.exists():
+                with open(self._schedules_path, "r", encoding="utf-8") as f:
+                    self._schedules = _json.load(f)
+        except Exception:
+            self._schedules = []
+
+    def _save_schedules(self):
+        try:
+            with open(self._schedules_path, "w", encoding="utf-8") as f:
+                _json.dump(self._schedules, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print("Failed saving schedules:", e)
+
+    def _start_scheduler(self):
+        try:
+            self._scheduler_thread = _SchedulerThread(self)
+            self._scheduler_thread.start()
+        except Exception as e:
+            messagebox.showerror("מתזמן", f"כשל בהפעלת המתזמן: {e}")
+
+    def _stop_scheduler(self):
+        th = getattr(self, "_scheduler_thread", None)
+        if th:
+            try:
+                th.stop()
+            except Exception:
+                pass
+
+    # ----- UI injection -----
+    def _inject_schedule_ui(self):
+        # Ensure store + thread
+        self._init_schedules_store()
+
+        # Create the page and add a nav button (row 4 after the existing three)
+        try:
+            self.page_schedule = ttk.Frame(self.content)
+            self.page_schedule.grid(row=0, column=0, sticky="nsew")
+        except Exception:
+            # Fallback: place directly if content not found
+            self.page_schedule = ttk.Frame(self)
+            self.page_schedule.grid(row=0, column=0, sticky="nsew")
+
+        # Add navigation button
+        try:
+            # Find next available row in sidebar
+            next_row = 4
+            try:
+                # probe existing grid slaves to pick next row dynamically
+                rows = [w.grid_info().get("row", 0) for w in self.sidebar.grid_slaves()]
+                if rows:
+                    next_row = max(rows) + 1
+            except Exception:
+                pass
+            self.btn_sched = ttk.Button(self.sidebar, text="תזמון הודעות", style="Nav.TButton",
+                                        command=lambda: self.show_page(self.page_schedule))
+            self.btn_sched.grid(row=next_row, column=0, sticky="ew", padx=12, pady=6)
+        except Exception:
+            pass
+
+        # Build page UI
+        frm = self.page_schedule
+        for i in range(2):
+            frm.columnconfigure(i, weight=1)
+        frm.rowconfigure(3, weight=1)
+
+        top = ttk.LabelFrame(frm, text="יצירת תזמון")
+        top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
+
+        # Group selection (combobox + free text)
+        ttk.Label(top, text="שם קבוצה/איש קשר:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
+        recent = self.settings.values.get("recent_groups", []) if hasattr(self, "settings") else []
+        self.var_sched_group = tk.StringVar(value=(recent[0] if recent else ""))
+        self.cb_sched_group = ttk.Combobox(top, textvariable=self.var_sched_group, values=recent, width=32)
+        self.cb_sched_group.grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+
+        # Date/time picker
+        ttk.Label(top, text="תאריך ושעה:").grid(row=1, column=2, sticky="e", padx=6, pady=6)
+        # Try tkcalendar.DateEntry if available
+        self.var_date = tk.StringVar()
+        self.var_hour = tk.StringVar(value="09")
+        self.var_min = tk.StringVar(value="00")
+        used_tkcalendar = False
+        try:
+            from tkcalendar import DateEntry  # type: ignore
+            self.date_entry = DateEntry(top, date_pattern="yyyy-mm-dd", width=12)
+            # default to now + 10 minutes
+            import datetime as _dt
+            dt0 = _dt.datetime.now() + _dt.timedelta(minutes=10)
+            self.date_entry.set_date(dt0.date())
+            self.var_date.set(self.date_entry.get_date().strftime("%Y-%m-%d"))
+            self.date_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+            used_tkcalendar = True
+        except Exception:
+            # fallback: three Spinboxes (YYYY-MM-DD)
+            y, m, d = datetime.now().year, datetime.now().month, datetime.now().day
+            self.var_date.set(f"{y:04d}-{m:02d}-{d:02d}")
+            self.ent_date = ttk.Entry(top, textvariable=self.var_date, width=12, justify="center")
+            self.ent_date.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+
+        self.spn_hour = ttk.Spinbox(top, from_=0, to=23, wrap=True, width=4, textvariable=self.var_hour, justify="center")
+        self.spn_min  = ttk.Spinbox(top, from_=0, to=59, wrap=True, width=4, textvariable=self.var_min, justify="center")
+        self.spn_hour.grid(row=1, column=0, sticky="w", padx=(6,2), pady=6)
+        self.spn_min.grid(row=1, column=0, sticky="w", padx=(60,2), pady=6)
+
+        # Message body (preview + edit in Notepad button)
+        ttk.Label(top, text="הודעה:").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
+        self.var_sched_text = tk.StringVar(value="")
+        self.txt_sched_preview = tk.Text(top, height=4, wrap="word")
+        self.txt_sched_preview.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(6,2))
+        try:
+            self._patch_text_colors(self.txt_sched_preview)  # respect theme if available
+            _rtl_text_widget(self.txt_sched_preview)
+        except Exception:
+            pass
+        def _edit_now():
+            cur = self.txt_sched_preview.get("1.0", "end-1c")
+            edited = _edit_text_in_notepad(cur)
+            self.txt_sched_preview.delete("1.0", "end")
+            self.txt_sched_preview.insert("1.0", edited)
+        ttk.Button(top, text="ערוך ב-Notepad…", command=_edit_now).grid(row=2, column=0, sticky="e", padx=6, pady=(6,2))
+
+        # Action buttons
+        actions = ttk.Frame(top)
+        actions.grid(row=3, column=0, columnspan=3, sticky="e", padx=6, pady=(8,2))
+        ttk.Button(actions, text="הוסף תזמון", style="Primary.TButton", command=self._on_add_schedule).pack(side="right", padx=6)
+        ttk.Button(actions, text="שלח עכשיו", command=self._on_send_now).pack(side="right", padx=6)
+
+        # Table of schedules
+        tbl = ttk.LabelFrame(frm, text="תזמונים קיימים")
+        tbl.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0,10))
+        self.tree_sched = ttk.Treeview(tbl, columns=("when","group","text","status"), show="headings", height=8)
+        self.tree_sched.heading("when", text="מתי")
+        self.tree_sched.heading("group", text="קבוצה/איש קשר")
+        self.tree_sched.heading("text", text="טקסט")
+        self.tree_sched.heading("status", text="סטטוס")
+        self.tree_sched.column("when", width=160, anchor="center")
+        self.tree_sched.column("group", width=200, anchor="e")
+        self.tree_sched.column("text", width=480, anchor="w")
+        self.tree_sched.column("status", width=100, anchor="center")
+        self.tree_sched.pack(fill="both", expand=True, padx=6, pady=6)
+
+        # Row actions
+        row_actions = ttk.Frame(frm)
+        row_actions.grid(row=2, column=0, columnspan=2, sticky="e", padx=10, pady=(0,10))
+        ttk.Button(row_actions, text="מחק", command=self._on_delete_schedule).pack(side="right", padx=6)
+        ttk.Button(row_actions, text="ערוך", command=self._on_edit_schedule).pack(side="right", padx=6)
+
+        # Status
+        self.var_sched_status = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=self.var_sched_status).grid(row=3, column=0, columnspan=2, sticky="w", padx=12, pady=(0,10))
+
+        self._refresh_sched_table()
+        self._start_scheduler()
+
+        # Hook window close to also stop scheduler
+        try:
+            prev_cb = self.protocol("WM_DELETE_WINDOW")
+        except Exception:
+            prev_cb = None
+        self.protocol("WM_DELETE_WINDOW", self._on_close_with_scheduler)
+
+    def _on_close_with_scheduler(self):
+        try:
+            self._stop_scheduler()
+        except Exception:
+            pass
+        try:
+            # Stop bot if running (preserve original behavior if exists)
+            if getattr(self, "bot", None) is not None:
+                try:
+                    self.bot.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Finally destroy
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def _sched_set_status(self, msg: str):
+        try:
+            self.var_sched_status.set(msg)
+        except Exception:
+            pass
+
+    def _get_current_text(self) -> str:
+        try:
+            return self.txt_sched_preview.get("1.0", "end-1c")
+        except Exception:
+            return ""
+
+    def _on_add_schedule(self):
+        group = self.var_sched_group.get().strip()
+        if not group:
+            messagebox.showwarning("קבוצה/איש קשר", "נא למלא שם קבוצה או איש קשר.")
+            return
+        # date
+        if hasattr(self, "date_entry"):
+            dstr = self.date_entry.get_date().strftime("%Y-%m-%d")
+        else:
+            dstr = self.var_date.get().strip()
+        hh = (self.var_hour.get() or "00").zfill(2)
+        mm = (self.var_min.get() or "00").zfill(2)
+        try:
+            when = _parse_time_from_inputs(dstr, hh, mm)
+            if when <= datetime.now():
+                messagebox.showwarning("זמן", "התאריך/שעה חייבים להיות בעתיד.")
+                return
+        except Exception as e:
+            messagebox.showerror("זמן", f"זמן לא חוקי: {e}")
+            return
+        text = self._get_current_text()
+        if not text:
+            if not messagebox.askyesno("טקסט ריק", "ההודעה ריקה. להוסיף בכל זאת?"):
+                return
+        item = {
+            "id": f"{int(_time.time()*1000)}",
+            "when": when.isoformat(timespec="minutes"),
+            "group": group,
+            "text": text,
+            "status": "pending"
+        }
+        self._schedules.append(item)
+        self._save_schedules()
+        self._refresh_sched_table()
+        self._sched_set_status("נוסף תזמון.")
+
+    def _on_send_now(self):
+        group = self.var_sched_group.get().strip()
+        if not group:
+            messagebox.showwarning("קבוצה/איש קשר", "נא למלא שם קבוצה או איש קשר.")
+            return
+        text = self._get_current_text()
+        ok = self._send_scheduled_message(group, text)
+        self._sched_set_status("נשלח בהצלחה." if ok else "שליחה נכשלה.")
+
+    def _refresh_sched_table(self):
+        try:
+            for i in self.tree_sched.get_children():
+                self.tree_sched.delete(i)
+            for it in sorted(self._schedules, key=lambda x: x.get("when", "")):
+                self.tree_sched.insert("", "end", iid=it["id"],
+                                       values=(it.get("when",""), it.get("group",""),
+                                               _safe_text_preview(it.get("text","")), it.get("status","")))
+        except Exception:
+            pass
+
+    def _on_delete_schedule(self):
+        sel = self.tree_sched.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        self._schedules = [x for x in self._schedules if x["id"] != iid]
+        self._save_schedules()
+        self._refresh_sched_table()
+
+    def _on_edit_schedule(self):
+        sel = self.tree_sched.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        it = next((x for x in self._schedules if x["id"] == iid), None)
+        if not it:
+            return
+        # edit via Notepad
+        new_text = _edit_text_in_notepad(it.get("text",""))
+        it["text"] = new_text
+        # allow editing time/group via inputs
+        try:
+            if hasattr(self, "date_entry"):
+                dstr = self.date_entry.get_date().strftime("%Y-%m-%d")
+            else:
+                dstr = self.var_date.get().strip()
+            hh = (self.var_hour.get() or "00").zfill(2)
+            mm = (self.var_min.get() or "00").zfill(2)
+            it["when"] = _parse_time_from_inputs(dstr, hh, mm).isoformat(timespec="minutes")
+            it["group"] = self.var_sched_group.get().strip() or it["group"]
+        except Exception:
+            pass
+        it["status"] = "pending"
+        self._save_schedules()
+        self._refresh_sched_table()
+        self._sched_set_status("עודכן תזמון.")
+
+    def _send_scheduled_message(self, group: str, text: str) -> bool:
+        """
+        Always send a scheduled message using a separate Chrome profile so the main bot's
+        active chat is never disturbed. This prevents WhatsApp Web from jumping to "You"
+        (or any other chat) while the main bot is running.
+        First time on this profile you'll need to scan the QR once.
+        """
+        try:
+            # Use a dedicated 'schedule_profile' to avoid any interference with the main bot
+            alt_profile = PROFILE_DIR / "schedule_profile"
+            alt_profile.mkdir(exist_ok=True)
+            opts = Options()
+            opts.add_argument(f"--user-data-dir={alt_profile.resolve()}")
+            opts.add_argument("--start-maximized")
+            opts.add_argument("--log-level=3")
+            opts.add_argument("--disable-logging")
+            opts.add_experimental_option("detach", True)
+            _drv = webdriver.Chrome(options=opts)
+            try:
+                _drv.get("https://web.whatsapp.com")
+                wait_for_login(_drv)  # If first time on this profile, scan QR once.
+                open_chat(_drv, group)
+                box = WebDriverWait(_drv, 10).until(EC.element_to_be_clickable((By.XPATH, MSG_AREA)))
+                _time.sleep(0.6)
+                box.send_keys(text, Keys.ENTER)
+                # --- Wait for confirmation that the message actually appeared in the chat ---
+                sent_ok = False
+                try:
+                    # Poll up to ~20s for the last bubble's text to equal our text
+                    for _ in range(100):  # 100 * 0.2s = 20s max
+                        try:
+                            bubbles = _drv.find_elements(By.CSS_SELECTOR, BUBBLES_ANY_CSS)
+                            if bubbles:
+                                last_txt = bubbles[-1].text.strip()
+                                if last_txt == (text or "").strip():
+                                    sent_ok = True
+                                    break
+                        except Exception:
+                            pass
+                        _time.sleep(0.2)
+                except Exception:
+                    sent_ok = False
+
+                if sent_ok:
+                    _time.sleep(0.4)
+                    self._sched_set_status(f"נשלחה הודעה מתוזמנת ל-{group}")
+                    return True
+                else:
+                    self._sched_set_status("אישור שליחה לא התקבל בזמן (Timeout)")
+                    return False
+            finally:
+                try:
+                    _drv.quit()
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                self._sched_set_status(f"כשל בשליחת הודעה מתוזמנת: {e}")
+            except Exception:
+                pass
+        return False
+class AppWithSchedule(App, SchedulePageMixin):
+    def __init__(self):
+        super().__init__()
+        # Inject new page + scheduler
+        try:
+            self._inject_schedule_ui()
+        except Exception as e:
+            try:
+                messagebox.showerror("תזמון הודעות", f"כשל בבניית העמוד: {e}")
+            except Exception:
+                pass
+
+# Replace the original App reference so main() will instantiate the extended one.
+App = AppWithSchedule
+# =========================
+# End Scheduler Add-on
+# =========================
 
 if __name__ == "__main__":
     main()
