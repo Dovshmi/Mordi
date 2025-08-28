@@ -229,7 +229,7 @@ def _build_anyorder_lookaheads(terms_raw: str, allow_inside_sep: bool, allow_pre
     """
     בונה אוסף Lookaheads כך שכל מונח חייב להופיע כטוקן נפרד (רק גבולות רווח/תחילת/סוף שורה).
     מאפשר תחיליות אופציונליות לפני כל מונח.
-    דוגמה: (?=.*(?<!\S)(?:[והבכלמש]{1,4})?סיב(?!\S))
+    דוגמה: (?=.*(?<!\\S)(?:[והבכלמש]{1,4})?סיב(?!\\S))
     """
     lookaheads = []
     pref  = _prefix_pat(allow_inside_sep, enabled=allow_prefixes) if allow_prefixes else ""
@@ -446,6 +446,7 @@ class RegexBuilderDialog(tk.Toplevel):
         ttk.Label(c, textvariable=self.var_test_res, foreground="#0a7").grid(row=9, column=0, sticky="w", padx=6, pady=(0,6))
 
         # Actions
+        # --- Save edited values (including repeat) and activate ---
         btns = ttk.Frame(c)
         btns.grid(row=11, column=0, columnspan=2, sticky="e", padx=6, pady=(6,0))
         self.btn_ok = ttk.Button(btns, text="אישור והמשך…", command=self._on_accept)
@@ -2108,6 +2109,28 @@ class _SchedulerThread(_thr.Thread):
                             it["status"]  = "sent" if ok else "failed"
                             it["sent_at"] = datetime.now().isoformat(timespec="seconds")
                             try:
+                                rep = (it.get('repeat') or 'once')
+                                if ok and rep and rep != 'once':
+                                    try:
+                                        _when = datetime.fromisoformat(it.get('when',''))
+                                    except Exception:
+                                        _when = datetime.now()
+                                    if rep == 'daily':
+                                        _when = _when + _time.timedelta(days=1)
+                                    elif rep == 'weekly':
+                                        _when = _when + _time.timedelta(weeks=1)
+                                    elif rep == 'monthly':
+                                        y, m = _when.year, _when.month
+                                        m += 1
+                                        y += (m - 1) // 12
+                                        m = ((m - 1) % 12) + 1
+                                        day = min(_when.day, [31,29 if y%4==0 and (y%100!=0 or y%400==0) else 28,31,30,31,30,31,31,30,31,30,31][m-1])
+                                        _when = _when.replace(year=y, month=m, day=day)
+                                    it['when'] = _when.isoformat(timespec='minutes')
+                                    it['status'] = 'pending'
+                            except Exception:
+                                pass
+                            try:
                                 self.app_ref.after(0, self.app_ref._refresh_sched_table)
                             except Exception:
                                 pass
@@ -2131,6 +2154,81 @@ class _SchedulerThread(_thr.Thread):
             _time.sleep(1.0)
 
 class SchedulePageMixin:
+
+    # ----- Start/Stop handlers and repeat helpers -----
+    def _repeat_label_to_code(self, lbl: str) -> str:
+        m = {'חד פעמי':'once','חד-פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly',
+             'once':'once','daily':'daily','weekly':'weekly','monthly':'monthly'}
+        return m.get((lbl or '').strip(), 'once')
+
+    def _roll_forward(self, when, repeat: str, now=None):
+        import datetime as _dt
+        now = now or _dt.datetime.now()
+        if not isinstance(when, _dt.datetime):
+            try:
+                when = _dt.datetime.fromisoformat(str(when))
+            except Exception:
+                when = now
+        if repeat == 'daily':
+            while when <= now:
+                when += _dt.timedelta(days=1)
+            return when
+        if repeat == 'weekly':
+            while when <= now:
+                when += _dt.timedelta(weeks=1)
+            return when
+        if repeat == 'monthly':
+            y, m = when.year, when.month
+            while when <= now:
+                m += 1
+                y += (m - 1) // 12
+                m = ((m - 1) % 12) + 1
+                day = min(when.day, [31,29 if y%4==0 and (y%100!=0 or y%400==0) else 28,31,30,31,30,31,31,30,31,30,31][m-1])
+                when = when.replace(year=y, month=m, day=day)
+            return when
+        if when <= now:
+            return when + _dt.timedelta(days=1)
+        return when
+
+    def _on_stop_schedule(self):
+        sel = self.tree_sched.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        it = next((x for x in self._schedules if x.get('id')==iid), None)
+        if not it:
+            return
+        it['status'] = 'paused'
+        self._save_schedules()
+        self._refresh_sched_table()
+        self._sched_set_status('התזמון נעצר (סטטוס: נעצר).')
+
+    def _on_start_schedule(self):
+        sel = self.tree_sched.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        it = next((x for x in self._schedules if x.get('id')==iid), None)
+        if not it:
+            return
+        import datetime as _dt
+        now = _dt.datetime.now()
+        try:
+            when = _dt.datetime.fromisoformat(it.get('when',''))
+        except Exception:
+            when = now
+        rep = (it.get('repeat') or 'once')
+        if rep == 'once':
+            if it.get('status') in ('sent','failed') or when <= now:
+                when = _dt.datetime.combine(now.date(), _dt.time(when.hour, when.minute)) + _dt.timedelta(days=1)
+        else:
+            if when <= now:
+                when = self._roll_forward(when, rep, now)
+        it['when'] = when.isoformat(timespec='minutes')
+        it['status'] = 'pending'
+        self._save_schedules()
+        self._refresh_sched_table()
+        self._sched_set_status('התזמון הופעל.')
     """
     Mixin that augments App with:
     - schedules store + persistence
@@ -2245,6 +2343,10 @@ class SchedulePageMixin:
         self.spn_hour.grid(row=1, column=0, sticky="w", padx=(6,2), pady=6)
         self.spn_min.grid(row=1, column=0, sticky="w", padx=(60,2), pady=6)
 
+        # Repeat selection
+        self.var_repeat = tk.StringVar(value="חד פעמי")
+        self.cb_repeat = ttk.Combobox(top, textvariable=self.var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly")
+        self.cb_repeat.grid(row=1, column=0, sticky="w", padx=(108,2), pady=6)
         # Message body (preview + edit in Notepad button)
         ttk.Label(top, text="הודעה:").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
         self.var_sched_text = tk.StringVar(value="")
@@ -2260,13 +2362,13 @@ class SchedulePageMixin:
             edited = _edit_text_in_notepad(cur)
             self.txt_sched_preview.delete("1.0", "end")
             self.txt_sched_preview.insert("1.0", edited)
-        ttk.Button(top, text="ערוך ב-Notepad…", command=_edit_now).grid(row=2, column=0, sticky="e", padx=6, pady=(6,2))
 
         # Action buttons
         actions = ttk.Frame(top)
         actions.grid(row=3, column=0, columnspan=3, sticky="e", padx=6, pady=(8,2))
         ttk.Button(actions, text="הוסף תזמון", style="Primary.TButton", command=self._on_add_schedule).pack(side="right", padx=6)
         ttk.Button(actions, text="שלח עכשיו", command=self._on_send_now).pack(side="right", padx=6)
+        ttk.Button(actions, text="ערוך הודעה ב-Notepad…", command=_edit_now).pack(side="right", padx=6)
 
         # Table of schedules
         tbl = ttk.LabelFrame(frm, text="תזמונים קיימים")
@@ -2284,9 +2386,11 @@ class SchedulePageMixin:
 
         # Row actions
         row_actions = ttk.Frame(frm)
+        ttk.Button(row_actions, text="עצור", command=self._on_stop_schedule).pack(side="right", padx=6)
+        ttk.Button(row_actions, text="הפעל", command=self._on_start_schedule).pack(side="right", padx=6)
         row_actions.grid(row=2, column=0, columnspan=2, sticky="e", padx=10, pady=(0,10))
         ttk.Button(row_actions, text="מחק", command=self._on_delete_schedule).pack(side="right", padx=6)
-        ttk.Button(row_actions, text="ערוך", command=self._on_edit_schedule).pack(side="right", padx=6)
+        ttk.Button(row_actions, text="ערוך", command=lambda s=self: s._on_edit_schedule()).pack(side="right", padx=6)
 
         # Status
         self.var_sched_status = tk.StringVar(value="")
@@ -2365,6 +2469,13 @@ class SchedulePageMixin:
             "text": text,
             "status": "pending"
         }
+        try:
+            _rep_lbl = (self.var_repeat.get() or 'חד פעמי').strip()
+        except Exception:
+            _rep_lbl = 'חד פעמי'
+        _rep_map = {'חד פעמי':'once','חד-פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly','once':'once','daily':'daily','weekly':'weekly','monthly':'monthly'}
+        item['repeat'] = _rep_map.get(_rep_lbl, 'once')
+
         self._schedules.append(item)
         self._save_schedules()
         self._refresh_sched_table()
@@ -2399,95 +2510,158 @@ class SchedulePageMixin:
         self._save_schedules()
         self._refresh_sched_table()
 
+    
     def _on_edit_schedule(self):
+        """Open edit dialog for selected schedule. Pure edit — does NOT auto-activate."""
         sel = self.tree_sched.selection()
         if not sel:
             return
         iid = sel[0]
-        it = next((x for x in self._schedules if x["id"] == iid), None)
+        it = next((x for x in self._schedules if x.get("id") == iid), None)
         if not it:
             return
-        # edit via Notepad
-        new_text = _edit_text_in_notepad(it.get("text",""))
-        it["text"] = new_text
-        # allow editing time/group via inputs
+
+        import tkinter as tk
+        from tkinter import ttk, messagebox
+        from datetime import datetime as _dt
+
+        # Parse current values
+        cur_group = (it.get("group") or "").strip()
         try:
-            if hasattr(self, "date_entry"):
-                dstr = self.date_entry.get_date().strftime("%Y-%m-%d")
-            else:
-                dstr = self.var_date.get().strip()
-            hh = (self.var_hour.get() or "00").zfill(2)
-            mm = (self.var_min.get() or "00").zfill(2)
-            it["when"] = _parse_time_from_inputs(dstr, hh, mm).isoformat(timespec="minutes")
-            it["group"] = self.var_sched_group.get().strip() or it["group"]
+            cur_when = _dt.fromisoformat(it.get("when", ""))
+        except Exception:
+            cur_when = _dt.now()
+        cur_text = (it.get("text") or "")
+        cur_repeat = (it.get("repeat") or "once")
+
+        lbl_to_code = {'חד פעמי':'once','חד-פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly',
+                       'once':'once','daily':'daily','weekly':'weekly','monthly':'monthly'}
+        code_to_lbl = {'once':'חד פעמי','daily':'יומי','weekly':'שבועי','monthly':'חודשי'}
+
+        # Dialog
+        dlg = tk.Toplevel(self)
+        dlg.title("עריכת תזמון")
+        try: dlg.transient(self)
+        except Exception: pass
+        try: dlg.grab_set()
+        except Exception: pass
+        try: dlg.resizable(False, False)
+        except Exception: pass
+
+        c = ttk.Frame(dlg, padding=10)
+        c.grid(row=0, column=0, sticky="nsew")
+        c.columnconfigure(0, weight=1)
+
+        # Group
+        ttk.Label(c, text="קבוצה/איש קשר:").grid(row=0, column=1, sticky="e", padx=6, pady=6)
+        var_group = tk.StringVar(value=cur_group)
+        recent = []
+        try:
+            recent = self.settings.values.get("recent_groups", []) if hasattr(self, "settings") else []
         except Exception:
             pass
-        it["status"] = "pending"
-        self._save_schedules()
-        self._refresh_sched_table()
-        self._sched_set_status("עודכן תזמון.")
+        ttk.Combobox(c, textvariable=var_group, values=recent, width=30).grid(row=0, column=0, sticky="ew", padx=6, pady=6)
 
-    def _send_scheduled_message(self, group: str, text: str) -> bool:
-        """
-        Always send a scheduled message using a separate Chrome profile so the main bot's
-        active chat is never disturbed. This prevents WhatsApp Web from jumping to "You"
-        (or any other chat) while the main bot is running.
-        First time on this profile you'll need to scan the QR once.
-        """
+        # Date/time
+        ttk.Label(c, text="תאריך ושעה:").grid(row=1, column=1, sticky="e", padx=6, pady=6)
+        var_date = tk.StringVar(value=cur_when.strftime("%Y-%m-%d"))
+        var_hour = tk.StringVar(value=cur_when.strftime("%H"))
+        var_min  = tk.StringVar(value=cur_when.strftime("%M"))
+        used_tkcalendar = False
         try:
-            # Use a dedicated 'schedule_profile' to avoid any interference with the main bot
-            alt_profile = PROFILE_DIR / "schedule_profile"
-            alt_profile.mkdir(exist_ok=True)
-            opts = Options()
-            opts.add_argument(f"--user-data-dir={alt_profile.resolve()}")
-            opts.add_argument("--start-maximized")
-            opts.add_argument("--log-level=3")
-            opts.add_argument("--disable-logging")
-            opts.add_experimental_option("detach", True)
-            _drv = webdriver.Chrome(options=opts)
-            try:
-                _drv.get("https://web.whatsapp.com")
-                wait_for_login(_drv)  # If first time on this profile, scan QR once.
-                open_chat(_drv, group)
-                box = WebDriverWait(_drv, 10).until(EC.element_to_be_clickable((By.XPATH, MSG_AREA)))
-                _time.sleep(0.6)
-                box.send_keys(text, Keys.ENTER)
-                # --- Wait for confirmation that the message actually appeared in the chat ---
-                sent_ok = False
-                try:
-                    # Poll up to ~20s for the last bubble's text to equal our text
-                    for _ in range(100):  # 100 * 0.2s = 20s max
-                        try:
-                            bubbles = _drv.find_elements(By.CSS_SELECTOR, BUBBLES_ANY_CSS)
-                            if bubbles:
-                                last_txt = bubbles[-1].text.strip()
-                                if last_txt == (text or "").strip():
-                                    sent_ok = True
-                                    break
-                        except Exception:
-                            pass
-                        _time.sleep(0.2)
-                except Exception:
-                    sent_ok = False
+            from tkcalendar import DateEntry  # type: ignore
+            date_entry = DateEntry(c, date_pattern="yyyy-mm-dd", width=12)
+            date_entry.set_date(cur_when.date())
+            date_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+            used_tkcalendar = True
+        except Exception:
+            ent_date = ttk.Entry(c, textvariable=var_date, width=12, justify="center")
+            ent_date.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        spn_hour = ttk.Spinbox(c, from_=0, to=23, wrap=True, width=4, textvariable=var_hour, justify='center')
+        spn_min  = ttk.Spinbox(c, from_=0, to=59, wrap=True, width=4, textvariable=var_min,  justify='center')
+        spn_hour.grid(row=1, column=0, sticky='w', padx=(6,2), pady=6)
+        spn_min.grid(row=1, column=0, sticky='w', padx=(60,2), pady=6)
 
-                if sent_ok:
-                    _time.sleep(1.0)
-                    self._sched_set_status(f"נשלחה הודעה מתוזמנת ל-{group}")
-                    return True
-                else:
-                    self._sched_set_status("אישור שליחה לא התקבל בזמן (Timeout)")
-                    return False
-            finally:
+        # Repeat
+        ttk.Label(c, text="חזרה:").grid(row=1, column=1, sticky="e", padx=(6,120), pady=6)
+        var_repeat = tk.StringVar(value=code_to_lbl.get(cur_repeat, "חד פעמי"))
+        ttk.Combobox(c, textvariable=var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly").grid(row=1, column=0, sticky='w', padx=(108,2), pady=6)
+
+        # Message preview + edit (read-only preview; editing via Notepad)
+        ttk.Label(c, text="טקסט:").grid(row=2, column=1, sticky="ne", padx=6, pady=(6,2))
+        txt = tk.Text(c, width=60, height=5)
+        txt.grid(row=2, column=0, sticky="ew", padx=6, pady=(6,2))
+        try:
+            txt.insert("1.0", cur_text)
+        except Exception:
+            pass
+
+        edited_msg = {"text": cur_text}
+
+        def _parse_time_from_inputs(dstr: str, hh: str, mm: str):
+            return _dt.fromisoformat(f"{(dstr or '').strip()} {(hh or '00').zfill(2)}:{(mm or '00').zfill(2)}")
+
+        def on_edit_msg():
+            try:
+                new_text = _edit_text_in_notepad(edited_msg["text"])
+                edited_msg["text"] = new_text
                 try:
-                    _drv.quit()
+                    self._sched_set_status("טקסט ההודעה נערך (טרם נשמר).")
                 except Exception:
                     pass
-        except Exception as e:
+                try:
+                    # also reflect in preview
+                    txt.delete("1.0", "end")
+                    txt.insert("1.0", new_text)
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    messagebox.showerror("עריכה", f"שגיאה בעריכת טקסט: {e}", parent=dlg)
+                except Exception:
+                    pass
+
+        def on_apply():
+            group = var_group.get().strip()
+            if not group:
+                messagebox.showwarning("קבוצה/איש קשר", "נא למלא שם קבוצה או איש קשר.", parent=dlg)
+                return
+            if used_tkcalendar:
+                dstr = date_entry.get_date().strftime("%Y-%m-%d")
+            else:
+                dstr = var_date.get().strip()
+            hh = (var_hour.get() or "00").zfill(2)
+            mm = (var_min.get() or "00").zfill(2)
             try:
-                self._sched_set_status(f"כשל בשליחת הודעה מתוזמנת: {e}")
+                new_when = _parse_time_from_inputs(dstr, hh, mm)
+            except Exception as e:
+                messagebox.showerror("זמן", f"זמן לא חוקי: {e}", parent=dlg)
+                return
+
+            # Commit edits WITHOUT changing status
+            it["group"] = group
+            it["when"]  = new_when.isoformat(timespec="minutes")
+            it["text"]  = edited_msg.get("text", cur_text)
+            rep_lbl = (var_repeat.get() or "חד פעמי").strip()
+            it["repeat"] = {'חד פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly'}.get(rep_lbl, "once")
+
+            try:
+                self._save_schedules()
+                self._refresh_sched_table()
+                self._sched_set_status("עודכן תזמון (ללא הפעלה).")
             except Exception:
                 pass
-        return False
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+
+        btns = ttk.Frame(c)
+        btns.grid(row=3, column=0, columnspan=2, sticky="e", padx=6, pady=(6,0))
+        ttk.Button(btns, text="שמירה", style="Primary.TButton", command=on_apply).pack(side="right", padx=6)
+        ttk.Button(btns, text="ערוך הודעה ב-Notepad…", command=on_edit_msg).pack(side="right", padx=6)
+        ttk.Button(btns, text="ביטול", command=lambda: dlg.destroy()).pack(side="right", padx=6)
+
 class AppWithSchedule(App, SchedulePageMixin):
     def __init__(self):
         super().__init__()
