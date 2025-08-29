@@ -2069,7 +2069,7 @@ class _SchedulerThread(_thr.Thread):
                         # ensure logged in
                         wait_for_login(_drv, sec=120)
 
-                        for it in items:
+                        for it in sorted(items, key=lambda x: (str(x.get("group","")), str(x.get("text","")), str(x.get("when","")))):
                             ok = False
                             try:
                                 group = (it.get("group") or "").strip()
@@ -2106,34 +2106,49 @@ class _SchedulerThread(_thr.Thread):
                             except Exception:
                                 ok = False
                             # update item status + UI
-                            it["status"]  = "sent" if ok else "failed"
+                            it["last_status"] = "sent" if ok else "failed"
                             it["sent_at"] = datetime.now().isoformat(timespec="seconds")
                             try:
+                                import datetime as _dt
                                 rep = (it.get('repeat') or 'once')
-                                if ok and rep and rep != 'once':
+                                # normalize label to code (supports Hebrew labels)
+                                _rep_map = {
+                                    'חד פעמי': 'once', 'חד-פעמי': 'once',
+                                    'יומי': 'daily', 'שבועי': 'weekly', 'חודשי': 'monthly',
+                                    'once': 'once', 'daily': 'daily', 'weekly': 'weekly', 'monthly': 'monthly'
+                                }
+                                rep_code = _rep_map.get(str(rep).strip(), 'once')
+                                if rep_code and rep_code != 'once':
                                     try:
                                         _when = datetime.fromisoformat(it.get('when',''))
                                     except Exception:
                                         _when = datetime.now()
-                                    if rep == 'daily':
-                                        _when = _when + _time.timedelta(days=1)
-                                    elif rep == 'weekly':
-                                        _when = _when + _time.timedelta(weeks=1)
-                                    elif rep == 'monthly':
+                                    if rep_code == 'daily':
+                                        _when = _when + _dt.timedelta(days=1)
+                                    elif rep_code == 'weekly':
+                                        _when = _when + _dt.timedelta(weeks=1)
+                                    elif rep_code == 'monthly':
                                         y, m = _when.year, _when.month
                                         m += 1
                                         y += (m - 1) // 12
                                         m = ((m - 1) % 12) + 1
-                                        day = min(_when.day, [31,29 if y%4==0 and (y%100!=0 or y%400==0) else 28,31,30,31,30,31,31,30,31,30,31][m-1])
+                                        day = min(_when.day, [31, 29 if y % 4 == 0 and (y % 100 != 0 or y % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1])
                                         _when = _when.replace(year=y, month=m, day=day)
                                     it['when'] = _when.isoformat(timespec='minutes')
                                     it['status'] = 'pending'
+                                else:
+                                    it["status"] = "sent" if ok else "failed"
                             except Exception:
                                 pass
                             try:
                                 self.app_ref.after(0, self.app_ref._refresh_sched_table)
                             except Exception:
                                 pass
+                            try:
+                                self.app_ref._save_schedules()
+                            except Exception:
+                                pass
+                            _time.sleep(0.4)
                         # end for items
                     finally:
                         try:
@@ -2373,14 +2388,16 @@ class SchedulePageMixin:
         # Table of schedules
         tbl = ttk.LabelFrame(frm, text="תזמונים קיימים")
         tbl.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0,10))
-        self.tree_sched = ttk.Treeview(tbl, columns=("when","group","text","status"), show="headings", height=8)
+        self.tree_sched = ttk.Treeview(tbl, columns=("when","group","repeat","text","status"), show="headings", height=8)
         self.tree_sched.heading("when", text="מתי")
         self.tree_sched.heading("group", text="קבוצה/איש קשר")
+        self.tree_sched.heading("repeat", text="חזרה")
         self.tree_sched.heading("text", text="טקסט")
         self.tree_sched.heading("status", text="סטטוס")
         self.tree_sched.column("when", width=160, anchor="center")
         self.tree_sched.column("group", width=200, anchor="e")
-        self.tree_sched.column("text", width=480, anchor="w")
+        self.tree_sched.column("repeat", width=80, anchor="center")
+        self.tree_sched.column("text", width=440, anchor="w")
         self.tree_sched.column("status", width=100, anchor="center")
         self.tree_sched.pack(fill="both", expand=True, padx=6, pady=6)
 
@@ -2497,7 +2514,9 @@ class SchedulePageMixin:
             for it in sorted(self._schedules, key=lambda x: x.get("when", "")):
                 self.tree_sched.insert("", "end", iid=it["id"],
                                        values=(it.get("when",""), it.get("group",""),
-                                               _safe_text_preview(it.get("text","")), it.get("status","")))
+                                               {'once':"חד פעמי", 'daily':"יומי", 'weekly':"שבועי", 'monthly':"חודשי"}.get(it.get("repeat","once"), "חד פעמי"),
+                                               _safe_text_preview(it.get("text","")),
+                                               it.get("status","")))
         except Exception:
             pass
 
