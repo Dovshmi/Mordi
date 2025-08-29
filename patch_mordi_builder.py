@@ -229,7 +229,7 @@ def _build_anyorder_lookaheads(terms_raw: str, allow_inside_sep: bool, allow_pre
     """
     בונה אוסף Lookaheads כך שכל מונח חייב להופיע כטוקן נפרד (רק גבולות רווח/תחילת/סוף שורה).
     מאפשר תחיליות אופציונליות לפני כל מונח.
-    דוגמה: (?=.*(?<!\S)(?:[והבכלמש]{1,4})?סיב(?!\S))
+    דוגמה: (?=.*(?<!\\S)(?:[והבכלמש]{1,4})?סיב(?!\\S))
     """
     lookaheads = []
     pref  = _prefix_pat(allow_inside_sep, enabled=allow_prefixes) if allow_prefixes else ""
@@ -446,6 +446,7 @@ class RegexBuilderDialog(tk.Toplevel):
         ttk.Label(c, textvariable=self.var_test_res, foreground="#0a7").grid(row=9, column=0, sticky="w", padx=6, pady=(0,6))
 
         # Actions
+        # --- Save edited values (including repeat) and activate ---
         btns = ttk.Frame(c)
         btns.grid(row=11, column=0, columnspan=2, sticky="e", padx=6, pady=(6,0))
         self.btn_ok = ttk.Button(btns, text="אישור והמשך…", command=self._on_accept)
@@ -2105,8 +2106,40 @@ class _SchedulerThread(_thr.Thread):
                             except Exception:
                                 ok = False
                             # update item status + UI
-                            it["status"]  = "sent" if ok else "failed"
+                            it["last_status"] = "sent" if ok else "failed"
                             it["sent_at"] = datetime.now().isoformat(timespec="seconds")
+                            try:
+                                import datetime as _dt
+                                rep = (it.get('repeat') or 'once')
+                                # normalize label to code (supports Hebrew labels)
+                                _rep_map = {
+                                    'חד פעמי': 'once', 'חד-פעמי': 'once',
+                                    'יומי': 'daily', 'שבועי': 'weekly', 'חודשי': 'monthly',
+                                    'once': 'once', 'daily': 'daily', 'weekly': 'weekly', 'monthly': 'monthly'
+                                }
+                                rep_code = _rep_map.get(str(rep).strip(), 'once')
+                                if rep_code and rep_code != 'once':
+                                    try:
+                                        _when = datetime.fromisoformat(it.get('when',''))
+                                    except Exception:
+                                        _when = datetime.now()
+                                    if rep_code == 'daily':
+                                        _when = _when + _dt.timedelta(days=1)
+                                    elif rep_code == 'weekly':
+                                        _when = _when + _dt.timedelta(weeks=1)
+                                    elif rep_code == 'monthly':
+                                        y, m = _when.year, _when.month
+                                        m += 1
+                                        y += (m - 1) // 12
+                                        m = ((m - 1) % 12) + 1
+                                        day = min(_when.day, [31, 29 if y % 4 == 0 and (y % 100 != 0 or y % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1])
+                                        _when = _when.replace(year=y, month=m, day=day)
+                                    it['when'] = _when.isoformat(timespec='minutes')
+                                    it['status'] = 'pending'
+                                else:
+                                    it["status"] = "sent" if ok else "failed"
+                            except Exception:
+                                pass
                             try:
                                 self.app_ref.after(0, self.app_ref._refresh_sched_table)
                             except Exception:
@@ -2131,6 +2164,81 @@ class _SchedulerThread(_thr.Thread):
             _time.sleep(1.0)
 
 class SchedulePageMixin:
+
+    # ----- Start/Stop handlers and repeat helpers -----
+    def _repeat_label_to_code(self, lbl: str) -> str:
+        m = {'חד פעמי':'once','חד-פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly',
+             'once':'once','daily':'daily','weekly':'weekly','monthly':'monthly'}
+        return m.get((lbl or '').strip(), 'once')
+
+    def _roll_forward(self, when, repeat: str, now=None):
+        import datetime as _dt
+        now = now or _dt.datetime.now()
+        if not isinstance(when, _dt.datetime):
+            try:
+                when = _dt.datetime.fromisoformat(str(when))
+            except Exception:
+                when = now
+        if repeat == 'daily':
+            while when <= now:
+                when += _dt.timedelta(days=1)
+            return when
+        if repeat == 'weekly':
+            while when <= now:
+                when += _dt.timedelta(weeks=1)
+            return when
+        if repeat == 'monthly':
+            y, m = when.year, when.month
+            while when <= now:
+                m += 1
+                y += (m - 1) // 12
+                m = ((m - 1) % 12) + 1
+                day = min(when.day, [31,29 if y%4==0 and (y%100!=0 or y%400==0) else 28,31,30,31,30,31,31,30,31,30,31][m-1])
+                when = when.replace(year=y, month=m, day=day)
+            return when
+        if when <= now:
+            return when + _dt.timedelta(days=1)
+        return when
+
+    def _on_stop_schedule(self):
+        sel = self.tree_sched.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        it = next((x for x in self._schedules if x.get('id')==iid), None)
+        if not it:
+            return
+        it['status'] = 'paused'
+        self._save_schedules()
+        self._refresh_sched_table()
+        self._sched_set_status('התזמון נעצר (סטטוס: נעצר).')
+
+    def _on_start_schedule(self):
+        sel = self.tree_sched.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        it = next((x for x in self._schedules if x.get('id')==iid), None)
+        if not it:
+            return
+        import datetime as _dt
+        now = _dt.datetime.now()
+        try:
+            when = _dt.datetime.fromisoformat(it.get('when',''))
+        except Exception:
+            when = now
+        rep = (it.get('repeat') or 'once')
+        if rep == 'once':
+            if it.get('status') in ('sent','failed') or when <= now:
+                when = _dt.datetime.combine(now.date(), _dt.time(when.hour, when.minute)) + _dt.timedelta(days=1)
+        else:
+            if when <= now:
+                when = self._roll_forward(when, rep, now)
+        it['when'] = when.isoformat(timespec='minutes')
+        it['status'] = 'pending'
+        self._save_schedules()
+        self._refresh_sched_table()
+        self._sched_set_status('התזמון הופעל.')
     """
     Mixin that augments App with:
     - schedules store + persistence
@@ -2245,6 +2353,10 @@ class SchedulePageMixin:
         self.spn_hour.grid(row=1, column=0, sticky="w", padx=(6,2), pady=6)
         self.spn_min.grid(row=1, column=0, sticky="w", padx=(60,2), pady=6)
 
+        # Repeat selection
+        self.var_repeat = tk.StringVar(value="חד פעמי")
+        self.cb_repeat = ttk.Combobox(top, textvariable=self.var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly")
+        self.cb_repeat.grid(row=1, column=0, sticky="w", padx=(108,2), pady=6)
         # Message body (preview + edit in Notepad button)
         ttk.Label(top, text="הודעה:").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
         self.var_sched_text = tk.StringVar(value="")
@@ -2271,22 +2383,26 @@ class SchedulePageMixin:
         # Table of schedules
         tbl = ttk.LabelFrame(frm, text="תזמונים קיימים")
         tbl.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0,10))
-        self.tree_sched = ttk.Treeview(tbl, columns=("when","group","text","status"), show="headings", height=8)
+        self.tree_sched = ttk.Treeview(tbl, columns=("when","group","repeat","text","status"), show="headings", height=8)
         self.tree_sched.heading("when", text="מתי")
         self.tree_sched.heading("group", text="קבוצה/איש קשר")
+        self.tree_sched.heading("repeat", text="חזרה")
         self.tree_sched.heading("text", text="טקסט")
         self.tree_sched.heading("status", text="סטטוס")
         self.tree_sched.column("when", width=160, anchor="center")
         self.tree_sched.column("group", width=200, anchor="e")
-        self.tree_sched.column("text", width=480, anchor="w")
+        self.tree_sched.column("repeat", width=80, anchor="center")
+        self.tree_sched.column("text", width=440, anchor="w")
         self.tree_sched.column("status", width=100, anchor="center")
         self.tree_sched.pack(fill="both", expand=True, padx=6, pady=6)
 
         # Row actions
         row_actions = ttk.Frame(frm)
+        ttk.Button(row_actions, text="עצור", command=self._on_stop_schedule).pack(side="right", padx=6)
+        ttk.Button(row_actions, text="הפעל", command=self._on_start_schedule).pack(side="right", padx=6)
         row_actions.grid(row=2, column=0, columnspan=2, sticky="e", padx=10, pady=(0,10))
         ttk.Button(row_actions, text="מחק", command=self._on_delete_schedule).pack(side="right", padx=6)
-        ttk.Button(row_actions, text="ערוך", command=self._on_edit_schedule).pack(side="right", padx=6)
+        ttk.Button(row_actions, text="ערוך", command=lambda s=self: s._on_edit_schedule()).pack(side="right", padx=6)
 
         # Status
         self.var_sched_status = tk.StringVar(value="")
@@ -2365,6 +2481,13 @@ class SchedulePageMixin:
             "text": text,
             "status": "pending"
         }
+        try:
+            _rep_lbl = (self.var_repeat.get() or 'חד פעמי').strip()
+        except Exception:
+            _rep_lbl = 'חד פעמי'
+        _rep_map = {'חד פעמי':'once','חד-פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly','once':'once','daily':'daily','weekly':'weekly','monthly':'monthly'}
+        item['repeat'] = _rep_map.get(_rep_lbl, 'once')
+
         self._schedules.append(item)
         self._save_schedules()
         self._refresh_sched_table()
@@ -2386,7 +2509,9 @@ class SchedulePageMixin:
             for it in sorted(self._schedules, key=lambda x: x.get("when", "")):
                 self.tree_sched.insert("", "end", iid=it["id"],
                                        values=(it.get("when",""), it.get("group",""),
-                                               _safe_text_preview(it.get("text","")), it.get("status","")))
+                                               {'once':"חד פעמי", 'daily':"יומי", 'weekly':"שבועי", 'monthly':"חודשי"}.get(it.get("repeat","once"), "חד פעמי"),
+                                               _safe_text_preview(it.get("text","")),
+                                               it.get("status","")))
         except Exception:
             pass
 
@@ -2399,7 +2524,9 @@ class SchedulePageMixin:
         self._save_schedules()
         self._refresh_sched_table()
 
+    
     def _on_edit_schedule(self):
+        """Open edit dialog for selected schedule. Pure edit — does NOT auto-activate."""
         sel = self.tree_sched.selection()
         if not sel:
             return
@@ -2410,48 +2537,49 @@ class SchedulePageMixin:
 
         import tkinter as tk
         from tkinter import ttk, messagebox
-        from datetime import datetime
+        from datetime import datetime as _dt
 
         # Parse current values
         cur_group = (it.get("group") or "").strip()
         try:
-            cur_when = datetime.fromisoformat(it.get("when", ""))
+            cur_when = _dt.fromisoformat(it.get("when", ""))
         except Exception:
-            cur_when = datetime.now()
+            cur_when = _dt.now()
         cur_text = (it.get("text") or "")
+        cur_repeat = (it.get("repeat") or "once")
 
-        # We'll store a tentative message here; only commit on Save
-        edited_msg = {"text": cur_text}
+        lbl_to_code = {'חד פעמי':'once','חד-פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly',
+                       'once':'once','daily':'daily','weekly':'weekly','monthly':'monthly'}
+        code_to_lbl = {'once':'חד פעמי','daily':'יומי','weekly':'שבועי','monthly':'חודשי'}
 
+        # Dialog
         dlg = tk.Toplevel(self)
         dlg.title("עריכת תזמון")
-        dlg.transient(self)
-        try:
-            dlg.grab_set()
-        except Exception:
-            pass
-        try:
-            dlg.resizable(False, False)
-        except Exception:
-            pass
+        try: dlg.transient(self)
+        except Exception: pass
+        try: dlg.grab_set()
+        except Exception: pass
+        try: dlg.resizable(False, False)
+        except Exception: pass
 
         c = ttk.Frame(dlg, padding=10)
         c.grid(row=0, column=0, sticky="nsew")
-        c.columnconfigure(0, weight=1)
+        for col in (0,1):
+            c.columnconfigure(col, weight=1)
+        c.columnconfigure(2, weight=0)
 
-        # Group input
-        ttk.Label(c, text="קבוצה/איש קשר:").grid(row=0, column=1, sticky="e", padx=6, pady=6)
+        # Group
+        ttk.Label(c, text="קבוצה/איש קשר:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
         var_group = tk.StringVar(value=cur_group)
         recent = []
         try:
             recent = self.settings.values.get("recent_groups", []) if hasattr(self, "settings") else []
         except Exception:
             pass
-        cb_group = ttk.Combobox(c, textvariable=var_group, values=recent, width=30)
-        cb_group.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        ttk.Combobox(c, textvariable=var_group, values=recent, width=30).grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
 
-        # Date/time inputs
-        ttk.Label(c, text="תאריך ושעה:").grid(row=1, column=1, sticky="e", padx=6, pady=6)
+        # Date/time
+        ttk.Label(c, text="תאריך ושעה:").grid(row=1, column=2, sticky="e", padx=6, pady=6)
         var_date = tk.StringVar(value=cur_when.strftime("%Y-%m-%d"))
         var_hour = tk.StringVar(value=cur_when.strftime("%H"))
         var_min  = tk.StringVar(value=cur_when.strftime("%M"))
@@ -2460,34 +2588,54 @@ class SchedulePageMixin:
             from tkcalendar import DateEntry  # type: ignore
             date_entry = DateEntry(c, date_pattern="yyyy-mm-dd", width=12)
             date_entry.set_date(cur_when.date())
-            date_entry.grid(row=1, column=0, sticky="w", padx=6, pady=6)
+            date_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
             used_tkcalendar = True
         except Exception:
             ent_date = ttk.Entry(c, textvariable=var_date, width=12, justify="center")
-            ent_date.grid(row=1, column=0, sticky="w", padx=6, pady=6)
+            ent_date.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        timef = ttk.Frame(c)
+        timef.grid(row=1, column=0, sticky='w', padx=6, pady=6)
+        spn_hour = ttk.Spinbox(timef, from_=0, to=23, wrap=True, width=4, textvariable=var_hour, justify='center')
+        spn_min  = ttk.Spinbox(timef, from_=0, to=59, wrap=True, width=4, textvariable=var_min,  justify='center')
+        spn_hour.pack(side='left', padx=(0,4))
+        spn_min.pack(side='left')
 
-        spn_hour = ttk.Spinbox(c, from_=0, to=23, wrap=True, width=4, textvariable=var_hour, justify="center")
-        spn_min  = ttk.Spinbox(c, from_=0, to=59, wrap=True, width=4, textvariable=var_min,  justify="center")
-        spn_hour.grid(row=1, column=0, sticky="w", padx=(6,2), pady=6)
-        spn_min.grid(row=1, column=0, sticky="w", padx=(60,2), pady=6)
+        # Repeat
+        ttk.Label(c, text="חזרה:").grid(row=2, column=2, sticky="e", padx=6, pady=6)
+        var_repeat = tk.StringVar(value=code_to_lbl.get(cur_repeat, "חד פעמי"))
+        ttk.Combobox(c, textvariable=var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly").grid(row=2, column=1, sticky='w', padx=6, pady=6)
 
-        # Buttons
-        btns = ttk.Frame(c)
-        btns.grid(row=2, column=0, columnspan=2, sticky="e", padx=6, pady=(8,2))
+        # Message preview + edit (read-only preview; editing via Notepad)
+        ttk.Label(c, text="טקסט:").grid(row=2, column=1, sticky="ne", padx=6, pady=(6,2))
+        txt = tk.Text(c, width=60, height=5)
+        txt.grid(row=2, column=0, sticky="ew", padx=6, pady=(6,2))
+        try:
+            txt.insert("1.0", cur_text)
+        except Exception:
+            pass
+
+        edited_msg = {"text": cur_text}
+
+        def _parse_time_from_inputs(dstr: str, hh: str, mm: str):
+            return _dt.fromisoformat(f"{(dstr or '').strip()} {(hh or '00').zfill(2)}:{(mm or '00').zfill(2)}")
 
         def on_edit_msg():
-            # Use existing helper to open Notepad and return edited text
             try:
                 new_text = _edit_text_in_notepad(edited_msg["text"])
-                # Only update local tentative text; commit on Save
                 edited_msg["text"] = new_text
                 try:
                     self._sched_set_status("טקסט ההודעה נערך (טרם נשמר).")
                 except Exception:
                     pass
+                try:
+                    # also reflect in preview
+                    txt.delete("1.0", "end")
+                    txt.insert("1.0", new_text)
+                except Exception:
+                    pass
             except Exception as e:
                 try:
-                    messagebox.showerror("עריכת הודעה", f"שגיאה בעריכת הודעה: {e}", parent=dlg)
+                    messagebox.showerror("עריכה", f"שגיאה בעריכת טקסט: {e}", parent=dlg)
                 except Exception:
                     pass
 
@@ -2507,49 +2655,30 @@ class SchedulePageMixin:
             except Exception as e:
                 messagebox.showerror("זמן", f"זמן לא חוקי: {e}", parent=dlg)
                 return
+
+            # Commit edits WITHOUT changing status
             it["group"] = group
-            it["when"] = new_when.isoformat(timespec="minutes")
-            it["text"]  = edited_msg["text"]
-            it["status"] = "pending"
-            self._save_schedules()
-            self._refresh_sched_table()
-            self._sched_set_status("עודכן תזמון.")
+            it["when"]  = new_when.isoformat(timespec="minutes")
+            it["text"]  = txt.get("1.0", "end-1c")
+            rep_lbl = (var_repeat.get() or "חד פעמי").strip()
+            it["repeat"] = {'חד פעמי':'once','יומי':'daily','שבועי':'weekly','חודשי':'monthly'}.get(rep_lbl, "once")
+
+            try:
+                self._save_schedules()
+                self._refresh_sched_table()
+                self._sched_set_status("עודכן תזמון (ללא הפעלה).")
+            except Exception:
+                pass
             try:
                 dlg.destroy()
             except Exception:
                 pass
 
-        # Buttons order: Save (Primary), Edit Message (secondary), Cancel
+        btns = ttk.Frame(c)
+        btns.grid(row=3, column=0, columnspan=2, sticky="e", padx=6, pady=(6,0))
         ttk.Button(btns, text="שמירה", style="Primary.TButton", command=on_apply).pack(side="right", padx=6)
         ttk.Button(btns, text="ערוך הודעה ב-Notepad…", command=on_edit_msg).pack(side="right", padx=6)
         ttk.Button(btns, text="ביטול", command=lambda: dlg.destroy()).pack(side="right", padx=6)
-
-        def on_apply():
-            group = var_group.get().strip()
-            if not group:
-                messagebox.showwarning("קבוצה/איש קשר", "נא למלא שם קבוצה או איש קשר.", parent=dlg)
-                return
-            if used_tkcalendar:
-                dstr = date_entry.get_date().strftime("%Y-%m-%d")
-            else:
-                dstr = var_date.get().strip()
-            hh = (var_hour.get() or "00").zfill(2)
-            mm = (var_min.get() or "00").zfill(2)
-            try:
-                new_when = _parse_time_from_inputs(dstr, hh, mm)
-            except Exception as e:
-                messagebox.showerror("זמן", f"זמן לא חוקי: {e}", parent=dlg)
-                return
-            it["group"] = group
-            it["when"] = new_when.isoformat(timespec="minutes")
-            it["status"] = "pending"
-            self._save_schedules()
-            self._refresh_sched_table()
-            self._sched_set_status("עודכן תזמון.")
-            try:
-                dlg.destroy()
-            except Exception:
-                pass
 
 class AppWithSchedule(App, SchedulePageMixin):
     def __init__(self):
