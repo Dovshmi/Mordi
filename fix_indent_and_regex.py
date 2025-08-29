@@ -242,18 +242,37 @@ def _build_anyorder_lookaheads(terms_raw: str, allow_inside_sep: bool, allow_pre
 
 
 def build_regex(terms_raw: str, mode: str, case_ins: bool, allow_inside_sep: bool, allow_prefixes: bool,
-                 k_spec: dict | None = None) -> str:
+                k_spec: dict | None = None) -> str:
     """
     mode: 'whole' / 'part' / 'anyorder'
-    whole    – התאמה רק אם כל ההודעה (למעט רווחים בתחילה/סוף) שווה לביטוי/אחד מן הביטויים
-    part     – התאמה בכל מקום (גם בתוך משפט/מילה)
-    anyorder – כל המילים המוזנות (מופרדות בפסיק) חייבות להופיע כטוקנים נפרדים, בסדר חופשי
     """
-    # --- תחביר חדש (/, *) — קודם כל ננסה לבנות תבנית לפי הכללים החדשים ---
-    _gram_pat = _build_keywords_grammar_regex(terms_raw, mode, case_ins, allow_inside_sep, allow_prefixes)
+    # 1) Try the grammar-based builder (new syntax with groups and '*' etc.)
+    try:
+        _gram_pat = _build_keywords_grammar_regex(terms_raw, mode, case_ins, allow_inside_sep, allow_prefixes)
+    except Exception:
+        _gram_pat = None
     if _gram_pat:
-        return _gram_pat
+        return _gram_pat  # success with the new syntax
 
+    # 2) Fallback to legacy behavior so dialog always has a valid regex
+    flags = "(?i)" if case_ins else ""
+    pref  = _prefix_pat(allow_inside_sep, enabled=allow_prefixes)
+    core  = _build_core_group(terms_raw, allow_inside_sep)
+
+    if not core:
+        return ""  # no terms, disable confirm button upstream
+
+    if mode == "whole":
+        # Exact whole-message match (with optional whitespace around)
+        return fr"{flags}^\s*(?:{pref}{core})\s*$"
+
+    if mode == "anyorder":
+        # All words must appear as separate tokens, any order.
+        la = _build_anyorder_lookaheads(terms_raw, allow_inside_sep, allow_prefixes)
+        return f"{flags}{la}.*"
+
+    # default: 'part' — appear as a token inside a sentence (token boundaries)
+    return fr"{flags}(?s).*?(?<!\S){pref}{core}(?!\S).*"
 
 def fallback_prefill(dialog, pattern: str):
     """Prefill best-effort when structured parse fails; ensures builder isn't empty."""
@@ -1348,12 +1367,11 @@ class App(tk.Tk):
     # --------- דף הגדרות ---------
     def _build_settings_page(self):
         frm = self.page_settings
-        for i in range(2):
-            frm.columnconfigure(i, weight=1)
+        frm.columnconfigure(0, weight=1)
 
         # ערכת נושא
         theme_frame = ttk.LabelFrame(frm, text="ערכת נושא")
-        theme_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        theme_frame.grid(row=0, column=0, sticky="e", padx=10, pady=10)
         ttk.Label(theme_frame, text="בחר/י מצב:").grid(row=0, column=1, sticky="e", padx=6, pady=6)
         self.theme_var = tk.StringVar(value=self.settings.values.get("theme", "dark"))
         ttk.Radiobutton(theme_frame, text="כהה", value="dark", variable=self.theme_var,
@@ -1363,7 +1381,7 @@ class App(tk.Tk):
 
         # שמירה אוטומטית
         autosave_frame = ttk.LabelFrame(frm, text="שמירה אוטומטית של המאגר")
-        autosave_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+        autosave_frame.grid(row=1, column=0, sticky="e", padx=10, pady=10)
         self.autosave_enabled = tk.BooleanVar(value=self.settings.values.get("autosave_enabled", True))
         ttk.Checkbutton(autosave_frame, text="הפעל שמירה אוטומטית",
                         variable=self.autosave_enabled, command=self.on_toggle_autosave).grid(row=0, column=0, sticky="w", padx=6, pady=6)
@@ -1374,7 +1392,7 @@ class App(tk.Tk):
 
         # התנהגות
         behavior = ttk.LabelFrame(frm, text="התנהגות")
-        behavior.grid(row=2, column=0, sticky="ew", padx=10, pady=10)
+        behavior.grid(row=2, column=0, sticky="e", padx=10, pady=10)
         self.confirm_del = tk.BooleanVar(value=self.settings.values.get("confirm_deletions", True))
         ttk.Checkbutton(behavior, text="אישור לפני מחיקה", variable=self.confirm_del, command=self.on_update_settings).grid(row=0, column=0, sticky="w", padx=6, pady=6)
         self.start_maximized = tk.BooleanVar(value=self.settings.values.get("start_maximized", True))
@@ -2315,12 +2333,11 @@ class SchedulePageMixin:
 
         # Build page UI
         frm = self.page_schedule
-        for i in range(2):
-            frm.columnconfigure(i, weight=1)
-        frm.rowconfigure(3, weight=1)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(1, weight=1)
 
         top = ttk.LabelFrame(frm, text="יצירת תזמון")
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
+        top.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
 
         # Group selection (combobox + free text)
         ttk.Label(top, text="שם קבוצה/איש קשר:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
@@ -2333,7 +2350,7 @@ class SchedulePageMixin:
         ttk.Label(top, text="תאריך ושעה:").grid(row=1, column=2, sticky="e", padx=6, pady=6)
         # Try tkcalendar.DateEntry if available
         self.var_date = tk.StringVar()
-        self.var_hour = tk.StringVar(value="09")
+        self.var_hour = tk.StringVar(value="12")
         self.var_min = tk.StringVar(value="00")
         used_tkcalendar = False
         try:
@@ -2361,7 +2378,7 @@ class SchedulePageMixin:
         # Repeat selection
         self.var_repeat = tk.StringVar(value="חד פעמי")
         self.cb_repeat = ttk.Combobox(top, textvariable=self.var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly")
-        self.cb_repeat.grid(row=1, column=0, sticky="w", padx=(108,2), pady=6)
+        self.cb_repeat.grid(row=1, column=0, sticky="w", padx=(212,2), pady=6)
         # Message body (preview + edit in Notepad button)
         ttk.Label(top, text="הודעה:").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
         self.var_sched_text = tk.StringVar(value="")
@@ -2387,7 +2404,7 @@ class SchedulePageMixin:
 
         # Table of schedules
         tbl = ttk.LabelFrame(frm, text="תזמונים קיימים")
-        tbl.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0,10))
+        tbl.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0,10))
         self.tree_sched = ttk.Treeview(tbl, columns=("when","group","repeat","text","status"), show="headings", height=8)
         self.tree_sched.heading("when", text="מתי")
         self.tree_sched.heading("group", text="קבוצה/איש קשר")
