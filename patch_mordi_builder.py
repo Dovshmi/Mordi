@@ -242,18 +242,37 @@ def _build_anyorder_lookaheads(terms_raw: str, allow_inside_sep: bool, allow_pre
 
 
 def build_regex(terms_raw: str, mode: str, case_ins: bool, allow_inside_sep: bool, allow_prefixes: bool,
-                 k_spec: dict | None = None) -> str:
+                k_spec: dict | None = None) -> str:
     """
     mode: 'whole' / 'part' / 'anyorder'
-    whole    – התאמה רק אם כל ההודעה (למעט רווחים בתחילה/סוף) שווה לביטוי/אחד מן הביטויים
-    part     – התאמה בכל מקום (גם בתוך משפט/מילה)
-    anyorder – כל המילים המוזנות (מופרדות בפסיק) חייבות להופיע כטוקנים נפרדים, בסדר חופשי
     """
-    # --- תחביר חדש (/, *) — קודם כל ננסה לבנות תבנית לפי הכללים החדשים ---
-    _gram_pat = _build_keywords_grammar_regex(terms_raw, mode, case_ins, allow_inside_sep, allow_prefixes)
+    # 1) Try the grammar-based builder (new syntax with groups and '*' etc.)
+    try:
+        _gram_pat = _build_keywords_grammar_regex(terms_raw, mode, case_ins, allow_inside_sep, allow_prefixes)
+    except Exception:
+        _gram_pat = None
     if _gram_pat:
-        return _gram_pat
+        return _gram_pat  # success with the new syntax
 
+    # 2) Fallback to legacy behavior so dialog always has a valid regex
+    flags = "(?i)" if case_ins else ""
+    pref  = _prefix_pat(allow_inside_sep, enabled=allow_prefixes)
+    core  = _build_core_group(terms_raw, allow_inside_sep)
+
+    if not core:
+        return ""  # no terms, disable confirm button upstream
+
+    if mode == "whole":
+        # Exact whole-message match (with optional whitespace around)
+        return fr"{flags}^\s*(?:{pref}{core})\s*$"
+
+    if mode == "anyorder":
+        # All words must appear as separate tokens, any order.
+        la = _build_anyorder_lookaheads(terms_raw, allow_inside_sep, allow_prefixes)
+        return f"{flags}{la}.*"
+
+    # default: 'part' — appear as a token inside a sentence (token boundaries)
+    return fr"{flags}(?s).*?(?<!\S){pref}{core}(?!\S).*"
 
 def fallback_prefill(dialog, pattern: str):
     """Prefill best-effort when structured parse fails; ensures builder isn't empty."""
@@ -2069,7 +2088,7 @@ class _SchedulerThread(_thr.Thread):
                         # ensure logged in
                         wait_for_login(_drv, sec=120)
 
-                        for it in items:
+                        for it in sorted(items, key=lambda x: (str(x.get("group","")), str(x.get("text","")), str(x.get("when","")))):
                             ok = False
                             try:
                                 group = (it.get("group") or "").strip()
@@ -2144,6 +2163,11 @@ class _SchedulerThread(_thr.Thread):
                                 self.app_ref.after(0, self.app_ref._refresh_sched_table)
                             except Exception:
                                 pass
+                            try:
+                                self.app_ref._save_schedules()
+                            except Exception:
+                                pass
+                            _time.sleep(0.4)
                         # end for items
                     finally:
                         try:
@@ -2328,7 +2352,7 @@ class SchedulePageMixin:
         ttk.Label(top, text="תאריך ושעה:").grid(row=1, column=2, sticky="e", padx=6, pady=6)
         # Try tkcalendar.DateEntry if available
         self.var_date = tk.StringVar()
-        self.var_hour = tk.StringVar(value="09")
+        self.var_hour = tk.StringVar(value="12")
         self.var_min = tk.StringVar(value="00")
         used_tkcalendar = False
         try:
@@ -2356,7 +2380,7 @@ class SchedulePageMixin:
         # Repeat selection
         self.var_repeat = tk.StringVar(value="חד פעמי")
         self.cb_repeat = ttk.Combobox(top, textvariable=self.var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly")
-        self.cb_repeat.grid(row=1, column=0, sticky="w", padx=(108,2), pady=6)
+        self.cb_repeat.grid(row=1, column=0, sticky="w", padx=(212,2), pady=6)
         # Message body (preview + edit in Notepad button)
         ttk.Label(top, text="הודעה:").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
         self.var_sched_text = tk.StringVar(value="")
