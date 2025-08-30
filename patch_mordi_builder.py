@@ -419,7 +419,7 @@ class RegexBuilderDialog(tk.Toplevel):
         ent_terms.grid(row=0, column=0, sticky="ew", padx=6, pady=(0,6))
 
         # Mode radios
-        ttk.Label(c, text="צורת זיהוי:").grid(row=1, column=1, sticky="e", padx=6, pady=(8,2))
+        ttk.Label(c, text=":צורת זיהוי").grid(row=1, column=1, sticky="e", padx=6, pady=(8,2))
         self.var_mode = tk.StringVar(value="whole")
         ttk.Radiobutton(c, text="מילה/ביטוי לבדו (כל ההודעה)", value="whole",    variable=self.var_mode, command=self._refresh).grid(row=1, column=0, sticky="w", padx=6)
         ttk.Radiobutton(c, text="מופע כחלק ממשפט",               value="part",     variable=self.var_mode, command=self._refresh).grid(row=2, column=0, sticky="w", padx=6)# (נוטרל לפי בקשה) 
@@ -441,7 +441,7 @@ class RegexBuilderDialog(tk.Toplevel):
 
 
         # Preview
-        ttk.Label(c, text="תבנית שנבנתה (Regex):").grid(row=5, column=1, sticky="e", padx=6, pady=(10,2))
+        ttk.Label(c, text=":תבנית שנבנתה (Regex)").grid(row=5, column=1, sticky="e", padx=6, pady=(10,2))
         self.var_prev = tk.StringVar(value="")
         ent_prev = ttk.Entry(c, textvariable=self.var_prev, justify="left")
         ent_prev.grid(row=5, column=0, sticky="ew", padx=6, pady=(10,2))
@@ -457,7 +457,7 @@ class RegexBuilderDialog(tk.Toplevel):
         ttk.Label(c, text="הערה: במצב 'לבדו' ההודעה כולה חייבת להיות רק המילה/הביטוי (מותר רווחים בתחילה/סוף).", foreground="#666").grid(row=7, column=0, sticky="w", padx=6, pady=(0,8))
 
         # Test
-        ttk.Label(c, text="בדוק מול טקסט (רשות):").grid(row=8, column=1, sticky="e", padx=6, pady=(6,2))
+        ttk.Label(c, text=":בדוק מול טקסט (רשות)").grid(row=8, column=1, sticky="e", padx=6, pady=(6,2))
         self.var_test = tk.StringVar(value="")
         ent_test = ttk.Entry(c, textvariable=self.var_test, justify="right")
         ent_test.grid(row=8, column=0, sticky="ew", padx=6, pady=(6,2))
@@ -468,7 +468,7 @@ class RegexBuilderDialog(tk.Toplevel):
         # --- Save edited values (including repeat) and activate ---
         btns = ttk.Frame(c)
         btns.grid(row=11, column=0, columnspan=2, sticky="e", padx=6, pady=(6,0))
-        self.btn_ok = ttk.Button(btns, text="אישור והמשך…", command=self._on_accept)
+        self.btn_ok = ttk.Button(btns, text="...אישור והמשך", command=self._on_accept)
         self.btn_ok.pack(side="right", padx=4)
         ttk.Button(btns, text="סגור", command=self.destroy).pack(side="right", padx=4)
 
@@ -517,7 +517,7 @@ class RegexBuilderDialog(tk.Toplevel):
             # Live test
             self._update_live_test(pat)
         except re.error as e:
-            self.var_valid.set(f"❌ שגיאת Regex: {e}")
+            self.var_valid.set(f"❌ שגיאת Regex {e}")
             self.btn_ok.state(["disabled"])
 
     def _update_live_test(self, pat: str):
@@ -526,7 +526,7 @@ class RegexBuilderDialog(tk.Toplevel):
             ok = re.search(pat, txt) is not None
             self.var_test_res.set("✅ נמצא התאמה" if ok else "❌ אין התאמה")
         except re.error as e:
-            self.var_test_res.set(f"שגיאת Regex: {e}")
+            self.var_test_res.set(f"שגיאת Regex {e}")
 
     def _on_test(self):
         pat = self.var_prev.get().strip()
@@ -656,7 +656,7 @@ class RegexBuilderDialog(tk.Toplevel):
 
 
 
-APP_TITLE = "Mordi 6.0"
+APP_TITLE = "Mordi 7.4.0"
 DEFAULT_DATASET = "keywords.json"
 DEFAULT_GROUP   = ""
 FREE_CHOICE = "(בחירה חופשית)"
@@ -1098,7 +1098,7 @@ class App(tk.Tk):
         self.btn_settings = ttk.Button(self.sidebar, text="הגדרות", style="Nav.TButton", command=lambda: self.show_page(self.page_settings))
         self.btn_bot.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
         self.btn_data.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
-        self.btn_settings.grid(row=3, column=0, sticky="ew", padx=12, pady=6)
+        self.btn_settings.grid(row=4, column=0, sticky="ew", padx=12, pady=6)
 
         # קו מפריד דק
         sep = ttk.Separator(self, orient="vertical")
@@ -1178,7 +1178,7 @@ class App(tk.Tk):
                       foreground=[("disabled", "#b3b3b3")])
             style.configure("Primary.TButton", background="#8735BA", foreground="#ffffff")
             style.map("Primary.TButton",
-                      background=[("active", "#3fbc60"), ("pressed", "#111111")],
+                      background=[("active", "#12AA6B"), ("pressed", "#111111")],
                       foreground=[("disabled", "#b3b3b3")])
         else:
             # DARK mode — keep existing contrasty defaults
@@ -1258,7 +1258,7 @@ class App(tk.Tk):
             frm.columnconfigure(i, weight=1)
         frm.rowconfigure(3, weight=1)
 
-        ds_frame = ttk.LabelFrame(frm, text="מאגר")
+        ds_frame = ttk.LabelFrame(frm, text="Bank")
         ds_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
         self.ds_path_var = tk.StringVar(value=str(Path(DEFAULT_DATASET).resolve()))
         entry = ttk.Entry(ds_frame, textvariable=self.ds_path_var, justify="right")
@@ -1271,9 +1271,9 @@ class App(tk.Tk):
 
         
         ttk.Button(ds_frame, text="מאגר חדש…", command=self.on_new_dataset).grid(row=1, column=2, padx=4, pady=6, sticky="w")
-        ctrl = ttk.LabelFrame(frm, text="שליטה בבוט")
+        ctrl = ttk.LabelFrame(frm, text="Mordi")
         ctrl.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
-        ttk.Label(ctrl, text="שם הקבוצה:").grid(row=0, column=2, padx=6, pady=6, sticky="e")
+        ttk.Label(ctrl, text=":קבוצה").grid(row=0, column=2, padx=6, pady=6, sticky="e")
         # Build initial list: FREE_CHOICE + recents
         _rec = list(self.settings.values.get("recent_groups", []))
         if FREE_CHOICE not in _rec:
@@ -1302,7 +1302,7 @@ class App(tk.Tk):
         self.status.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0,10))
         _rtl_text_widget(self.status)
         self._patch_text_colors(self.status)
-        self._log("מוכן.")
+        self._log("מוכן")
 
     # --------- תוכן: דף ניהול מאגר ---------
     def _build_dataset_page(self):
@@ -1326,6 +1326,35 @@ class App(tk.Tk):
         self.rules.column("idx", anchor="center", width=50)
         self.rules.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
         self.rules.bind("<<TreeviewSelect>>", self.on_tree_select)
+        # ----- תפריט קליק ימני לטבלת "ניהול מאגר" -----
+        try:
+            self._rules_ctx.destroy()
+        except Exception:
+            pass
+        self._rules_ctx = tk.Menu(self, tearoff=False)
+        self._rules_ctx.add_command(label="ערוך", command=self.on_edit_regex)
+        self._rules_ctx.add_command(label="שכפל", command=self.on_dup_rule)
+        self._rules_ctx.add_command(label="מחק", command=self.on_delete_rule)
+        self._rules_ctx.add_separator()
+        self._rules_ctx.add_command(label="הוסף חדש", command=self.on_add_rule)
+        def _rules_popup(event):
+            try:
+                iid = self.rules.identify_row(event.y)
+                if iid:
+                    self.rules.selection_set(iid)
+            except Exception:
+                pass
+            try:
+                self._rules_ctx.tk_popup(event.x_root, event.y_root)
+            finally:
+                try:
+                    self._rules_ctx.grab_release()
+                except Exception:
+                    pass
+        # תמיכה ב-Windows וב-macOS
+        self.rules.bind("<Button-3>", _rules_popup, add=True)
+        self.rules.bind("<Button-2>", _rules_popup, add=True)
+
 
         btns = ttk.Frame(rules_frame)
         btns.grid(row=0, column=0, sticky="e", padx=6, pady=(8,0))
@@ -1341,14 +1370,14 @@ class App(tk.Tk):
 
         row = ttk.Frame(editor)
         row.grid(row=0, column=0, sticky="ew")
-        ttk.Label(row, text="ביטוי (Regex):").pack(side="right")
+        ttk.Label(row, text=":ביטוי (Regex)").pack(side="right")
         self.pattern_var = tk.StringVar()
         ent_pattern = ttk.Entry(row, textvariable=self.pattern_var, justify="right")
         ent_pattern.pack(side="right", fill="x", expand=True, padx=6)
         ent_pattern.bind("<FocusOut>", self.on_pattern_commit)
         ent_pattern.bind("<Return>", self.on_pattern_commit)
 
-        ttk.Label(editor, text="תגובות (אחת בכל שורה) — תצוגה בלבד:").grid(row=1, column=0, sticky="e", pady=(6,0))
+        ttk.Label(editor, text=":תגובות (אחת בכל שורה) — תצוגה בלבד").grid(row=1, column=0, sticky="e", pady=(6,0))
         self.replies_txt = tk.Text(editor, height=16, state="disabled")
         self.replies_txt.grid(row=2, column=0, sticky="nsew")
         vsb_replies = ttk.Scrollbar(editor, orient='vertical', command=self.replies_txt.yview)
@@ -1360,7 +1389,7 @@ class App(tk.Tk):
 
         actions = ttk.Frame(editor)
         actions.grid(row=3, column=0, sticky="e", pady=6)
-        ttk.Button(actions, text='ערוך בפנקס רשימות…', command=self.on_edit_in_notepad).pack(side='right', padx=4)
+        ttk.Button(actions, text='ערוך בפנקס רשימות', command=self.on_edit_in_notepad).pack(side='right', padx=4)
 
         self.refresh_rules_tree()
 
@@ -1372,7 +1401,7 @@ class App(tk.Tk):
         # ערכת נושא
         theme_frame = ttk.LabelFrame(frm, text="ערכת נושא")
         theme_frame.grid(row=0, column=0, sticky="e", padx=10, pady=10)
-        ttk.Label(theme_frame, text="בחר/י מצב:").grid(row=0, column=1, sticky="e", padx=6, pady=6)
+        ttk.Label(theme_frame, text=":בחר/י מצב").grid(row=0, column=1, sticky="e", padx=6, pady=6)
         self.theme_var = tk.StringVar(value=self.settings.values.get("theme", "dark"))
         ttk.Radiobutton(theme_frame, text="כהה", value="dark", variable=self.theme_var,
                         command=self.on_change_theme).grid(row=0, column=0, sticky="w")
@@ -1385,7 +1414,7 @@ class App(tk.Tk):
         self.autosave_enabled = tk.BooleanVar(value=self.settings.values.get("autosave_enabled", True))
         ttk.Checkbutton(autosave_frame, text="הפעל שמירה אוטומטית",
                         variable=self.autosave_enabled, command=self.on_toggle_autosave).grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(autosave_frame, text="כל כמה שניות לשמור:").grid(row=0, column=1, sticky="e")
+        ttk.Label(autosave_frame, text=":כל כמה שניות לשמור").grid(row=0, column=1, sticky="e")
         self.autosave_interval = tk.IntVar(value=int(self.settings.values.get("autosave_interval_sec", 15)))
         spin = ttk.Spinbox(autosave_frame, from_=5, to=600, textvariable=self.autosave_interval, width=6, command=self.on_change_autosave_interval)
         spin.grid(row=0, column=2, sticky="w", padx=6)
@@ -1425,7 +1454,7 @@ class App(tk.Tk):
             if self.settings.values.get("autosave_enabled", True) and self._dirty:
                 self.dataset.save(self.dataset.path)
                 self._dirty = False
-                self._log(f"שמירה אוטומטית: {self.dataset.path}")
+                self._log(f":שמירה אוטומטית {self.dataset.path}")
         finally:
             self.schedule_autosave()
 
@@ -1443,7 +1472,7 @@ class App(tk.Tk):
         except Exception:
             cur = Path("keywords.json")
         parent = cur.parent if cur.parent.exists() else Path(".")
-        name = simpledialog.askstring("מאגר חדש", "שם הקובץ (ללא סיומת):", initialvalue="keywords_new")
+        name = simpledialog.askstring("מאגר חדש", ":שם הקובץ (ללא סיומת)", initialvalue="keywords_new")
         if not name:
             return
         name = name.strip()
@@ -1507,7 +1536,7 @@ class App(tk.Tk):
             self.dataset.save(Path(path))
             self.ds_path_var.set(str(Path(path).resolve()))
             self._dirty = False
-            self._log(f"שמירה בשם: {path}")
+            self._log(f":שמירה בשם {path}")
         except Exception as e:
             messagebox.showerror("שמור בשם", str(e))
 
@@ -1515,7 +1544,7 @@ class App(tk.Tk):
         try:
             self.dataset.load()
             self.refresh_rules_tree()
-            self._log("המאגר נטען מחדש.")
+            self._log("המאגר נטען מחדש")
         except Exception as e:
             messagebox.showerror("רענון", str(e))
 
@@ -1620,11 +1649,11 @@ class App(tk.Tk):
         if self.bot and not self.bot.is_alive():
             self.bot = None
         if self.bot and self.bot.is_alive():
-            messagebox.showinfo("בוט", "הבוט כבר פועל.")
+            messagebox.showinfo("בוט", "הבוט כבר פועל")
             return
         group = self.group_var.get().strip()
         if not group:
-            messagebox.showwarning("קבוצה", "נא להזין שם קבוצה.")
+            messagebox.showwarning("קבוצה", "נא להזין שם קבוצה")
             return
         self._remember_group_name(group)
         self.settings.values["poll_interval_sec"] = int(self.poll_interval.get())
@@ -1641,7 +1670,7 @@ class App(tk.Tk):
             self.bot = None
             self._log("הבוט נעצר וניתן להפעיל אותו מחדש.")
         else:
-            self._log("הבוט אינו פעיל.")
+            self._log("הבוט אינו פעיל")
 
     # ---------- rules tree & viewer ----------
     
@@ -1682,7 +1711,7 @@ class App(tk.Tk):
             return
         new_pat = self.pattern_var.get().strip()
         if not new_pat:
-            messagebox.showwarning("Regex", "שדה הביטוי (Regex) לא יכול להיות ריק.")
+            messagebox.showwarning("Regex", "שדה הביטוי (Regex) לא יכול להיות ריק")
             return "break" if event and getattr(event, "keysym", "") == "Return" else None
         try:
             re.compile(new_pat, re.IGNORECASE)
@@ -1759,14 +1788,14 @@ class App(tk.Tk):
 
             messagebox.showerror("בונה סינטקס", f"כשל בפתיחת הבונה: {e}")
         if not self.rules.selection():
-            messagebox.showinfo("עריכה", "בחר/י כלל לעריכה בעץ הכללים.")
+            messagebox.showinfo("עריכה", "בחר/י כלל לעריכה בעץ הכללים")
         else:
-            self._log("כפתור העריכה הוא דרך 'ערוך בפנקס רשימות…' בלבד עבור התגובות.")
+            self._log("כפתור העריכה הוא דרך 'ערוך בפנקס רשימות…' בלבד עבור התגובות")
 
     def on_delete_rule(self):
         sel = self.rules.selection()
         if not sel:
-            messagebox.showinfo("מחיקה", "בחר/י כלל למחיקה.")
+            messagebox.showinfo("מחיקה", "בחר/י כלל למחיקה")
             return
         idx = int(sel[0])
         if self.settings.values.get("confirm_deletions", True):
@@ -1782,7 +1811,7 @@ class App(tk.Tk):
     def on_dup_rule(self):
         sel = self.rules.selection()
         if not sel:
-            messagebox.showinfo("שכפול", "בחר/י כלל לשכפול.")
+            messagebox.showinfo("שכפול", "בחר/י כלל לשכפול")
             return
         idx = int(sel[0])
         rule = self.dataset.rules[idx]
@@ -1798,7 +1827,7 @@ class App(tk.Tk):
         sel = self.rules.selection()
         if not sel:
             from tkinter import messagebox
-            messagebox.showinfo("עריכה", "בחר/י כלל לעריכה בעץ הכללים.")
+            messagebox.showinfo("עריכה", "בחר/י כלל לעריכה בעץ הכללים")
             return
         idx = int(sel[0])
         rule = self.dataset.rules[idx]
@@ -1860,7 +1889,7 @@ class App(tk.Tk):
     def on_edit_in_notepad(self):
         sel = self.rules.selection()
         if not sel:
-            messagebox.showinfo("עריכה", "בחר/י כלל לעריכה בעץ הכללים.")
+            messagebox.showinfo("עריכה", "בחר/י כלל לעריכה בעץ הכללים")
             return
         idx = int(sel[0])
         rule = self.dataset.rules[idx]
@@ -1943,11 +1972,11 @@ class App(tk.Tk):
         self.settings.values["start_maximized"]   = bool(self.start_maximized.get())
         self.settings.values["poll_interval_sec"] = max(1, int(self.poll_interval.get()))
         self.settings.save()
-        self._log("ההגדרות עודכנו ונשמרו.")
+        self._log("ההגדרות עודכנו ונשמרו")
 
     def on_save_settings_clicked(self):
         self.on_update_settings()
-        messagebox.showinfo("הגדרות", "ההגדרות נשמרו.")
+        messagebox.showinfo("הגדרות", "ההגדרות נשמרו")
 
     # ---------- logging ----------
     def _log(self, msg: str):
@@ -2234,7 +2263,7 @@ class SchedulePageMixin:
         it['status'] = 'paused'
         self._save_schedules()
         self._refresh_sched_table()
-        self._sched_set_status('התזמון נעצר (סטטוס: נעצר).')
+        self._sched_set_status('התזמון נעצר (סטטוס: נעצר)')
 
     def _on_start_schedule(self):
         sel = self.tree_sched.selection()
@@ -2322,7 +2351,7 @@ class SchedulePageMixin:
                 # probe existing grid slaves to pick next row dynamically
                 rows = [w.grid_info().get("row", 0) for w in self.sidebar.grid_slaves()]
                 if rows:
-                    next_row = max(rows) + 1
+                    next_row = 3
             except Exception:
                 pass
             self.btn_sched = ttk.Button(self.sidebar, text="תזמון הודעות", style="Nav.TButton",
@@ -2347,14 +2376,14 @@ class SchedulePageMixin:
             pass
 
         # Group selection (combobox + free text)
-        ttk.Label(top, text="שם קבוצה/איש קשר:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(top, text=":שם קבוצה/איש קשר").grid(row=0, column=2, sticky="e", padx=6, pady=6)
         recent = self.settings.values.get("recent_groups", []) if hasattr(self, "settings") else []
         self.var_sched_group = tk.StringVar(value=(recent[0] if recent else ""))
         self.cb_sched_group = ttk.Combobox(top, textvariable=self.var_sched_group, values=recent, width=32, justify="right")
         self.cb_sched_group.grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
 
         # Date/time picker
-        ttk.Label(top, text="תאריך ושעה:").grid(row=1, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(top, text=":תאריך ושעה").grid(row=1, column=2, sticky="e", padx=6, pady=6)
         # Try tkcalendar.DateEntry if available
         self.var_date = tk.StringVar()
         self.var_hour = tk.StringVar(value="12")
@@ -2395,7 +2424,7 @@ class SchedulePageMixin:
         self.cb_repeat = ttk.Combobox(row1f, textvariable=self.var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly", justify="right")
         self.cb_repeat.pack(side="right", padx=(0,12))
 # Message body (preview + edit in Notepad button)
-        ttk.Label(top, text="הודעה:").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
+        ttk.Label(top, text=":הודעה").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
         self.var_sched_text = tk.StringVar(value="")
         self.txt_sched_preview = tk.Text(top, height=4, wrap="word")
         self.txt_sched_preview.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(6,2))
@@ -2404,6 +2433,30 @@ class SchedulePageMixin:
             _rtl_text_widget(self.txt_sched_preview)
         except Exception:
             pass
+
+        # Ensure startup page is Bot after injecting the Schedule page (new page was just gridded and may cover others)
+        try:
+            _pref = (self.settings.values.get("startup_page", "bot") or "bot")
+            # Normalize common Hebrew labels to internal keys
+            _norm = {
+                "בוט": "bot",
+                "ניהול מאגר": "dataset",
+                "הגדרות": "settings",
+                "תזמון הודעות": "schedule",
+            }
+            _pref = _norm.get(_pref, _pref).lower()
+        except Exception:
+            _pref = "bot"
+
+        _page_map = {
+            "bot": getattr(self, "page_bot", None),
+            "dataset": getattr(self, "page_dataset", None),
+            "settings": getattr(self, "page_settings", None),
+            "schedule": getattr(self, "page_schedule", None),
+        }
+
+        _target = _page_map.get(_pref) or self.page_bot
+        self.show_page(_target)
         def _edit_now():
             cur = self.txt_sched_preview.get("1.0", "end-1c")
             edited = _edit_text_in_notepad(cur)
@@ -2415,7 +2468,7 @@ class SchedulePageMixin:
         actions.grid(row=3, column=0, columnspan=3, sticky="e", padx=6, pady=(8,2))
         ttk.Button(actions, text="הוסף תזמון", style="Primary.TButton", command=self._on_add_schedule).pack(side="right", padx=6)
         ttk.Button(actions, text="שלח עכשיו", command=self._on_send_now).pack(side="right", padx=6)
-        ttk.Button(actions, text="ערוך הודעה ב-Notepad…", command=_edit_now).pack(side="right", padx=6)
+        ttk.Button(actions, text="Notepad-ערוך ב", command=_edit_now).pack(side="right", padx=6)
 
         # Table of schedules
         tbl = ttk.LabelFrame(frm, text="תזמונים קיימים")
@@ -2432,6 +2485,33 @@ class SchedulePageMixin:
         self.tree_sched.column("text", width=440, anchor="e")
         self.tree_sched.column("status", width=100, anchor="e")
         self.tree_sched.pack(fill="both", expand=True, padx=6, pady=6)
+        # ----- תפריט קליק ימני לטבלת "תזמונים קיימים" -----
+        try:
+            self._sched_ctx.destroy()
+        except Exception:
+            pass
+        self._sched_ctx = tk.Menu(self, tearoff=False)
+        self._sched_ctx.add_command(label="ערוך", command=lambda s=self: s._on_edit_schedule())
+        self._sched_ctx.add_command(label="הפעל", command=self._on_start_schedule)
+        self._sched_ctx.add_command(label="עצור", command=self._on_stop_schedule)
+        self._sched_ctx.add_command(label="מחק", command=self._on_delete_schedule)
+        def _sched_popup(event):
+            try:
+                iid = self.tree_sched.identify_row(event.y)
+                if iid:
+                    self.tree_sched.selection_set(iid)
+            except Exception:
+                pass
+            try:
+                self._sched_ctx.tk_popup(event.x_root, event.y_root)
+            finally:
+                try:
+                    self._sched_ctx.grab_release()
+                except Exception:
+                    pass
+        self.tree_sched.bind("<Button-3>", _sched_popup, add=True)
+        self.tree_sched.bind("<Button-2>", _sched_popup, add=True)
+
 
         # Row actions
         row_actions = ttk.Frame(frm)
@@ -2681,7 +2761,7 @@ class SchedulePageMixin:
         c.columnconfigure(2, weight=0)
 
         # Group
-        ttk.Label(c, text="קבוצה/איש קשר:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(c, text=":קבוצה/איש קשר").grid(row=0, column=2, sticky="e", padx=6, pady=6)
         var_group = tk.StringVar(value=cur_group)
         recent = []
         try:
@@ -2691,7 +2771,7 @@ class SchedulePageMixin:
         ttk.Combobox(c, textvariable=var_group, values=recent, width=30).grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
 
         # Date/time
-        ttk.Label(c, text="תאריך ושעה:").grid(row=1, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(c, text=":תאריך ושעה").grid(row=1, column=2, sticky="e", padx=6, pady=6)
         var_date = tk.StringVar(value=cur_when.strftime("%Y-%m-%d"))
         var_hour = tk.StringVar(value=cur_when.strftime("%H"))
         var_min  = tk.StringVar(value=cur_when.strftime("%M"))
@@ -2713,12 +2793,12 @@ class SchedulePageMixin:
         spn_min.pack(side='left')
 
         # Repeat
-        ttk.Label(c, text="חזרה:").grid(row=2, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(c, text=":חזרה").grid(row=2, column=2, sticky="e", padx=6, pady=6)
         var_repeat = tk.StringVar(value=code_to_lbl.get(cur_repeat, "חד פעמי"))
         ttk.Combobox(c, textvariable=var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly").grid(row=2, column=1, sticky='e', padx=6, pady=6)
 
         # Message preview + edit (read-only preview; editing via Notepad)
-        ttk.Label(c, text="טקסט:").grid(row=2, column=1, sticky="ne", padx=6, pady=(6,2))
+        ttk.Label(c, text=":טקסט").grid(row=2, column=1, sticky="ne", padx=6, pady=(6,2))
         txt = tk.Text(c, width=60, height=5)
         txt.grid(row=2, column=0, sticky="ew", padx=6, pady=(6,2))
         try:
@@ -2789,7 +2869,7 @@ class SchedulePageMixin:
         btns = ttk.Frame(c)
         btns.grid(row=3, column=0, columnspan=2, sticky="e", padx=6, pady=(6,0))
         ttk.Button(btns, text="שמירה", style="Primary.TButton", command=on_apply).pack(side="right", padx=6)
-        ttk.Button(btns, text="ערוך הודעה ב-Notepad…", command=on_edit_msg).pack(side="right", padx=6)
+        ttk.Button(btns, text="Notepad-ערוך ב", command=on_edit_msg).pack(side="right", padx=6)
         ttk.Button(btns, text="ביטול", command=lambda: dlg.destroy()).pack(side="right", padx=6)
 
 class AppWithSchedule(App, SchedulePageMixin):
