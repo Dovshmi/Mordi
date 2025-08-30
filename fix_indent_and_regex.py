@@ -656,7 +656,7 @@ class RegexBuilderDialog(tk.Toplevel):
 
 
 
-APP_TITLE = "Mordi 6.0"
+APP_TITLE = "Mordi 7.2.0"
 DEFAULT_DATASET = "keywords.json"
 DEFAULT_GROUP   = ""
 FREE_CHOICE = "(בחירה חופשית)"
@@ -1098,7 +1098,7 @@ class App(tk.Tk):
         self.btn_settings = ttk.Button(self.sidebar, text="הגדרות", style="Nav.TButton", command=lambda: self.show_page(self.page_settings))
         self.btn_bot.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
         self.btn_data.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
-        self.btn_settings.grid(row=3, column=0, sticky="ew", padx=12, pady=6)
+        self.btn_settings.grid(row=4, column=0, sticky="ew", padx=12, pady=6)
 
         # קו מפריד דק
         sep = ttk.Separator(self, orient="vertical")
@@ -2322,7 +2322,7 @@ class SchedulePageMixin:
                 # probe existing grid slaves to pick next row dynamically
                 rows = [w.grid_info().get("row", 0) for w in self.sidebar.grid_slaves()]
                 if rows:
-                    next_row = max(rows) + 1
+                    next_row = 3
             except Exception:
                 pass
             self.btn_sched = ttk.Button(self.sidebar, text="תזמון הודעות", style="Nav.TButton",
@@ -2338,12 +2338,19 @@ class SchedulePageMixin:
 
         top = ttk.LabelFrame(frm, text="יצירת תזמון")
         top.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        # make the right side "heavier" so controls hug the right edge
+        try:
+            top.columnconfigure(0, weight=1)
+            top.columnconfigure(1, weight=0)
+            top.columnconfigure(2, weight=0)
+        except Exception:
+            pass
 
         # Group selection (combobox + free text)
         ttk.Label(top, text="שם קבוצה/איש קשר:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
         recent = self.settings.values.get("recent_groups", []) if hasattr(self, "settings") else []
         self.var_sched_group = tk.StringVar(value=(recent[0] if recent else ""))
-        self.cb_sched_group = ttk.Combobox(top, textvariable=self.var_sched_group, values=recent, width=32)
+        self.cb_sched_group = ttk.Combobox(top, textvariable=self.var_sched_group, values=recent, width=32, justify="right")
         self.cb_sched_group.grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
 
         # Date/time picker
@@ -2361,25 +2368,33 @@ class SchedulePageMixin:
             dt0 = _dt.datetime.now() + _dt.timedelta(minutes=10)
             self.date_entry.set_date(dt0.date())
             self.var_date.set(self.date_entry.get_date().strftime("%Y-%m-%d"))
-            self.date_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+            self.date_entry.grid(row=1, column=1, sticky="e", padx=6, pady=6)
             used_tkcalendar = True
         except Exception:
             # fallback: three Spinboxes (YYYY-MM-DD)
             y, m, d = datetime.now().year, datetime.now().month, datetime.now().day
             self.var_date.set(f"{y:04d}-{m:02d}-{d:02d}")
             self.ent_date = ttk.Entry(top, textvariable=self.var_date, width=12, justify="center")
-            self.ent_date.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+            self.ent_date.grid(row=1, column=1, sticky="e", padx=6, pady=6)
 
-        self.spn_hour = ttk.Spinbox(top, from_=0, to=23, wrap=True, width=4, textvariable=self.var_hour, justify="center")
-        self.spn_min  = ttk.Spinbox(top, from_=0, to=59, wrap=True, width=4, textvariable=self.var_min, justify="center")
-        self.spn_hour.grid(row=1, column=0, sticky="w", padx=(6,2), pady=6)
-        self.spn_min.grid(row=1, column=0, sticky="w", padx=(60,2), pady=6)
+        
+        # Time + Repeat (right-aligned container to avoid overlapping)
+        row1f = ttk.Frame(top)
+        row1f.grid(row=1, column=0, sticky="e", padx=6, pady=6)
 
-        # Repeat selection
+        # time frame: hour + minute, packed to the RIGHT
+        tf = ttk.Frame(row1f)
+        tf.pack(side="right", padx=(0, 8))
+        self.spn_hour = ttk.Spinbox(tf, from_=0, to=23, wrap=True, width=4, textvariable=self.var_hour, justify="center")
+        self.spn_min  = ttk.Spinbox(tf, from_=0, to=59, wrap=True, width=4, textvariable=self.var_min, justify="center")
+        self.spn_min.pack(side="right")
+        self.spn_hour.pack(side="right", padx=(0,4))
+
+        # Repeat combobox, to the LEFT of time -> visually closer to the date
         self.var_repeat = tk.StringVar(value="חד פעמי")
-        self.cb_repeat = ttk.Combobox(top, textvariable=self.var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly")
-        self.cb_repeat.grid(row=1, column=0, sticky="w", padx=(212,2), pady=6)
-        # Message body (preview + edit in Notepad button)
+        self.cb_repeat = ttk.Combobox(row1f, textvariable=self.var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly", justify="right")
+        self.cb_repeat.pack(side="right", padx=(0,12))
+# Message body (preview + edit in Notepad button)
         ttk.Label(top, text="הודעה:").grid(row=2, column=2, sticky="e", padx=6, pady=(6,2))
         self.var_sched_text = tk.StringVar(value="")
         self.txt_sched_preview = tk.Text(top, height=4, wrap="word")
@@ -2389,6 +2404,30 @@ class SchedulePageMixin:
             _rtl_text_widget(self.txt_sched_preview)
         except Exception:
             pass
+
+        # Ensure startup page is Bot after injecting the Schedule page (new page was just gridded and may cover others)
+        try:
+            _pref = (self.settings.values.get("startup_page", "bot") or "bot")
+            # Normalize common Hebrew labels to internal keys
+            _norm = {
+                "בוט": "bot",
+                "ניהול מאגר": "dataset",
+                "הגדרות": "settings",
+                "תזמון הודעות": "schedule",
+            }
+            _pref = _norm.get(_pref, _pref).lower()
+        except Exception:
+            _pref = "bot"
+
+        _page_map = {
+            "bot": getattr(self, "page_bot", None),
+            "dataset": getattr(self, "page_dataset", None),
+            "settings": getattr(self, "page_settings", None),
+            "schedule": getattr(self, "page_schedule", None),
+        }
+
+        _target = _page_map.get(_pref) or self.page_bot
+        self.show_page(_target)
         def _edit_now():
             cur = self.txt_sched_preview.get("1.0", "end-1c")
             edited = _edit_text_in_notepad(cur)
@@ -2406,16 +2445,16 @@ class SchedulePageMixin:
         tbl = ttk.LabelFrame(frm, text="תזמונים קיימים")
         tbl.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0,10))
         self.tree_sched = ttk.Treeview(tbl, columns=("when","group","repeat","text","status"), show="headings", height=8)
-        self.tree_sched.heading("when", text="מתי")
-        self.tree_sched.heading("group", text="קבוצה/איש קשר")
-        self.tree_sched.heading("repeat", text="חזרה")
-        self.tree_sched.heading("text", text="טקסט")
-        self.tree_sched.heading("status", text="סטטוס")
+        self.tree_sched.heading("when", text="מתי", anchor="center")
+        self.tree_sched.heading("group", text="קבוצה/איש קשר", anchor="e")
+        self.tree_sched.heading("repeat", text="חזרה", anchor="center")
+        self.tree_sched.heading("text", text="טקסט", anchor="e")
+        self.tree_sched.heading("status", text="סטטוס", anchor="e")
         self.tree_sched.column("when", width=160, anchor="center")
         self.tree_sched.column("group", width=200, anchor="e")
         self.tree_sched.column("repeat", width=80, anchor="center")
-        self.tree_sched.column("text", width=440, anchor="w")
-        self.tree_sched.column("status", width=100, anchor="center")
+        self.tree_sched.column("text", width=440, anchor="e")
+        self.tree_sched.column("status", width=100, anchor="e")
         self.tree_sched.pack(fill="both", expand=True, padx=6, pady=6)
 
         # Row actions
@@ -2523,17 +2562,92 @@ class SchedulePageMixin:
         text = self._get_current_text()
         ok = self._send_scheduled_message(group, text)
         self._sched_set_status("נשלח בהצלחה." if ok else "שליחה נכשלה.")
+    def _send_scheduled_message(self, group: str, text: str) -> bool:
+        """
+        שליחה מיידית של הודעה לצ'אט/קבוצה, בלי לפגוע בבוט הראשי.
+        משתמש בפרופיל כרום ייעודי ("schedule_profile") כדי למנוע התנגשויות.
+        """
+        try:
+            # build a separate Chrome profile so we don't collide with the main bot
+            alt_profile = PROFILE_DIR / "schedule_profile"
+            try:
+                alt_profile.mkdir(exist_ok=True)
+            except Exception:
+                pass
+            _opts = Options()
+            _opts.add_argument(f"--user-data-dir={alt_profile.resolve()}")
+            _opts.add_argument("--start-maximized")
+            _opts.add_argument("--log-level=3")
+            _opts.add_argument("--disable-logging")
+            _opts.add_experimental_option("detach", True)
+            drv = webdriver.Chrome(options=_opts)
+            drv.get("https://web.whatsapp.com/")
+            wait_for_login(drv, sec=120)
+
+            # open target chat
+            open_chat(drv, group)
+
+            # type and send
+            box = WebDriverWait(drv, 10).until(EC.element_to_be_clickable((By.XPATH, MSG_AREA)))
+            time.sleep(0.6)
+            box.send_keys(text or "", Keys.ENTER)
+
+            # verify it appeared
+            sent_ok = False
+            try:
+                for _ in range(100):  # ~20s
+                    try:
+                        bubbles = drv.find_elements(By.CSS_SELECTOR, BUBBLES_ANY_CSS)
+                        if bubbles:
+                            last_txt = bubbles[-1].text.strip()
+                            if last_txt == (text or "").strip():
+                                sent_ok = True
+                                break
+                    except Exception:
+                        pass
+                    time.sleep(0.2)
+            except Exception:
+                sent_ok = False
+
+            return bool(sent_ok)
+        except Exception:
+            return False
+        finally:
+            try:
+                drv.quit()
+            except Exception:
+                pass
+
 
     def _refresh_sched_table(self):
         try:
             for i in self.tree_sched.get_children():
                 self.tree_sched.delete(i)
+            # map status code to Hebrew for display
+            _status_map = {
+                "sent": "נשלח",
+                "failed": "נכשל",
+                "pending": "פעיל",
+                "paused": "נעצר"
+            }
+            _rep_map = {
+                "once": "חד פעמי",
+                "daily": "יומי",
+                "weekly": "שבועי",
+                "monthly": "חודשי",
+                "חד פעמי": "חד פעמי",
+                "יומי": "יומי",
+                "שבועי": "שבועי",
+                "חודשי": "חודשי"
+            }
             for it in sorted(self._schedules, key=lambda x: x.get("when", "")):
+                status_label = _status_map.get(str(it.get("status","")).strip(), str(it.get("status","")))
+                rep_label = _rep_map.get(str(it.get("repeat","once")).strip(), "חד פעמי")
                 self.tree_sched.insert("", "end", iid=it["id"],
                                        values=(it.get("when",""), it.get("group",""),
-                                               {'once':"חד פעמי", 'daily':"יומי", 'weekly':"שבועי", 'monthly':"חודשי"}.get(it.get("repeat","once"), "חד פעמי"),
+                                               rep_label,
                                                _safe_text_preview(it.get("text","")),
-                                               it.get("status","")))
+                                               status_label))
         except Exception:
             pass
 
@@ -2586,8 +2700,8 @@ class SchedulePageMixin:
 
         c = ttk.Frame(dlg, padding=10)
         c.grid(row=0, column=0, sticky="nsew")
-        for col in (0,1):
-            c.columnconfigure(col, weight=1)
+        c.columnconfigure(0, weight=1)
+        c.columnconfigure(1, weight=0)
         c.columnconfigure(2, weight=0)
 
         # Group
@@ -2610,13 +2724,13 @@ class SchedulePageMixin:
             from tkcalendar import DateEntry  # type: ignore
             date_entry = DateEntry(c, date_pattern="yyyy-mm-dd", width=12)
             date_entry.set_date(cur_when.date())
-            date_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+            date_entry.grid(row=1, column=1, sticky="e", padx=6, pady=6)
             used_tkcalendar = True
         except Exception:
             ent_date = ttk.Entry(c, textvariable=var_date, width=12, justify="center")
-            ent_date.grid(row=1, column=1, sticky="w", padx=6, pady=6)
+            ent_date.grid(row=1, column=1, sticky="e", padx=6, pady=6)
         timef = ttk.Frame(c)
-        timef.grid(row=1, column=0, sticky='w', padx=6, pady=6)
+        timef.grid(row=1, column=0, sticky='e', padx=6, pady=6)
         spn_hour = ttk.Spinbox(timef, from_=0, to=23, wrap=True, width=4, textvariable=var_hour, justify='center')
         spn_min  = ttk.Spinbox(timef, from_=0, to=59, wrap=True, width=4, textvariable=var_min,  justify='center')
         spn_hour.pack(side='left', padx=(0,4))
@@ -2625,7 +2739,7 @@ class SchedulePageMixin:
         # Repeat
         ttk.Label(c, text="חזרה:").grid(row=2, column=2, sticky="e", padx=6, pady=6)
         var_repeat = tk.StringVar(value=code_to_lbl.get(cur_repeat, "חד פעמי"))
-        ttk.Combobox(c, textvariable=var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly").grid(row=2, column=1, sticky='w', padx=6, pady=6)
+        ttk.Combobox(c, textvariable=var_repeat, values=["חד פעמי","יומי","שבועי","חודשי"], width=12, state="readonly").grid(row=2, column=1, sticky='e', padx=6, pady=6)
 
         # Message preview + edit (read-only preview; editing via Notepad)
         ttk.Label(c, text="טקסט:").grid(row=2, column=1, sticky="ne", padx=6, pady=(6,2))
